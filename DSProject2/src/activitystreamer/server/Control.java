@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
@@ -414,4 +415,21 @@ public class Control extends Thread {
 		setUpperServerName(null);
 		setUpperServerPort(null);
 	}
+	
+	public void cleanServerStatesList(){
+		Iterator<Map<String,String>> iter = interconnectedServers.iterator();
+		while(iter.hasNext()) {
+			Map<String,String> serverState = iter.next();
+			for (Connection c : connections) {
+				if (serverState.get("hostname").equals(c.getConName()) 
+						&& serverState.get("port").equals(c.getConPort().toString())) {
+					break;
+				} else {
+					iter.remove();
+					log.debug("clean server state of "+ c.getConPort());
+				}
+			}
+		}
+	}
 }
+
