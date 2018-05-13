@@ -37,11 +37,40 @@ public class Connection extends Thread {
     private boolean open = false;
     private boolean term = false;
     
+    // indicate the connection is the first outgoing connection
+    private boolean isInitialServer = false;
+    
     // indicate whether this connection belongs to a server
     private boolean isServer = false;
     
+    // the address of connection
+    private String name = null;
+    private Number port = null;
+    
     // indicate how many lock allowed has received
     private int nRequestAllo;
+    
+    public void setConName(String name) {
+    	this.name = name;
+    }
+    public void setConPort(Number port) {
+    	this.port = port;
+    }
+    public String getConName() {
+    	return this.name;
+    }
+    public Number getConPort() {
+    	return this.port;
+    }
+    
+    
+    public boolean isInitialServer() {
+    	return this.isInitialServer;
+    }
+
+    public void setInitialServer() {
+    	this.isInitialServer = true;
+    }
     
     public int getNRequestAllo() {
         return nRequestAllo;
@@ -117,6 +146,10 @@ public class Connection extends Thread {
             log.error("connection " + Settings.socketAddress(socket)
                     + " closed with exception: " + e);
             Control.getInstance().connectionClosed(this);
+            if (this.isInitialServer)
+            	Control.getInstance().crashRedirect();
+            if (this.isServer)
+            	Control.getInstance().updateBackup();
         } 
         open = false;
     }
