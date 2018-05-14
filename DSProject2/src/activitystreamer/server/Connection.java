@@ -146,7 +146,7 @@ public class Connection extends Thread {
             log.error("connection " + Settings.socketAddress(socket)
                     + " closed with exception: " + e);
             Control.getInstance().connectionClosed(this);
-            Control.getInstance().cleanServerStatesList();
+            //Control.getInstance().cleanServerStatesList();
             if (this.isInitialServer)
             	Control.getInstance().crashRedirect();
             if (this.isServer)

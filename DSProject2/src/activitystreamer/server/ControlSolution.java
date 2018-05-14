@@ -239,7 +239,7 @@ public class ControlSolution {
      */
     private static void updateSeverStates(JSONObject severAnnon) {
         ArrayList<Map<String, String>> interconnectedServers = Control
-                .getInstance().getInterconnectedServers();
+                .getInstance().getInterconnectedServersBuff();
         for (Map<String, String> serverState : interconnectedServers) {
             if (serverState.get("id").equals((String) severAnnon.get("id"))) {
                 Control.getInstance().removeConnectedServer(serverState);
@@ -404,7 +404,7 @@ public class ControlSolution {
             con.writeMsg(response);
             return true;
         }
-        if (Control.getInstance().getInterconnectedServers().size() == 0) {
+        if (Control.getInstance().getInterconnectedServers().size() == 0) { //??
             Control.getInstance().addRegisteredClient(username, secret);
             response = sendRegisterSucc(username);
             con.writeMsg(response);
