@@ -17,6 +17,7 @@ package activitystreamer.server;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -264,7 +265,12 @@ public class ControlSolution {
                     Settings.socketAddress(con.getSocket()));
             response = sendLoginSucc("anonymous");
             con.writeMsg(response);
-            sendRedirect(con);
+            //new change
+            String isRedir = sendRedirect();
+            if (isRedir != "false") {
+            	con.writeMsg(isRedir);
+            }            
+            //
             return false;
         } else {
             if (!hasValidKV("secret", login, con)) {
@@ -288,7 +294,12 @@ public class ControlSolution {
                     Settings.socketAddress(con.getSocket()));
             response = sendLoginSucc(username);
             con.writeMsg(response);
-            sendRedirect(con);
+            //new change
+            String isRedir = sendRedirect();
+            if (isRedir != "false") {
+            	con.writeMsg(isRedir);
+            }
+            //
             return false;
         }
     }
@@ -298,24 +309,94 @@ public class ControlSolution {
      * then send)
      */
     @SuppressWarnings("unchecked")
-    private static void sendRedirect(Connection con) {
+    public static String sendRedirect() {
         ArrayList<Connection> connections = Control.getInstance()
                 .getConnections();
+        ArrayList<Map<String, String>> candidate = new ArrayList<Map<String, String>>();
         int localLoad = localLoad(connections);
         ArrayList<Map<String, String>> interconnectedServers = Control
                 .getInstance().getInterconnectedServers();
+        boolean isRedir = false;
         for (Map<String, String> server : interconnectedServers) {
             int difference = localLoad - Integer.parseInt(server.get("load"));
             if (difference >= 2) {
-                JSONObject redirInfo = new JSONObject();
-                redirInfo.put("command", "REDIRECT");
-                redirInfo.put("hostname", server.get("hostname"));
-                redirInfo.put("port", server.get("port"));
-                con.writeMsg(redirInfo.toJSONString());
-                return;
+            	candidate.add(server);
+            	isRedir = true;
             }
         }
+        
+        if(isRedir) {
+            Map<String, String> objectServer = aimServer(candidate, localLoad);
+            JSONObject redirInfo = new JSONObject();
+            redirInfo.put("command", "REDIRECT");
+            redirInfo.put("hostname", objectServer.get("hostname"));
+            redirInfo.put("port", objectServer.get("port"));
+            return redirInfo.toJSONString();
+        }
+        else {
+            return "false";
+        }
     }
+    
+    //new addition
+    public static boolean isInProba(int presentage) {
+    	Random r = new Random();  
+    	int n = r.nextInt(100);  
+    	boolean isRedirFlag = false;
+    	if(n < presentage) {
+    		isRedirFlag = true;
+    	}
+    	return isRedirFlag;
+    }
+    
+    private static Map<String, String> aimServer(ArrayList<Map<String, String>> candidate, int localLoad) {
+    	ArrayList<Map<String, String>> maxServers = new ArrayList<Map<String, String>>();
+    	Map<String, String> objectServer = new HashMap<String, String>();
+    	int maxLoad = 0;
+    	int presentage = 66;
+
+        for (Map<String, String> server : candidate) {
+            int difference = localLoad - Integer.parseInt(server.get("load"));
+            if (difference >= 2) {
+            	if (difference > maxLoad) {
+            		maxLoad = difference;
+            	}
+            }
+        }
+        
+        for (Map<String, String> server : candidate) {
+        	int difference = localLoad - Integer.parseInt(server.get("load"));
+        	if (difference == maxLoad) {
+        		maxServers.add(server);
+        	}
+        }
+        
+        if(isInProba(presentage)) {
+        	int maxServerIndex;
+        	Random selectedServer = new Random();  
+        	maxServerIndex = selectedServer.nextInt(maxServers.size());
+        	objectServer = maxServers.get(maxServerIndex);
+        }
+        else {        	
+        	int selectedServerIndex;
+        	candidate.removeAll(maxServers);
+        	Random selectedServer = new Random(); 
+        	if (candidate.size() != 0) {
+              	selectedServerIndex = selectedServer.nextInt(candidate.size());
+            	objectServer = candidate.get(selectedServerIndex);
+        	}
+        	else {
+            	int maxServerIndex;
+            	maxServerIndex = selectedServer.nextInt(maxServers.size());
+            	objectServer = maxServers.get(maxServerIndex);
+        	}
+        }
+    	
+    	return objectServer;
+    }
+    //
+    
+    
     
     /**
      * send a login fail message to a client

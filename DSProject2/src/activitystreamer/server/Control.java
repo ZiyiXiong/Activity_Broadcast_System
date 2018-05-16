@@ -261,9 +261,21 @@ public class Control extends Thread {
 
     public boolean doActivity() {
         for (Connection c : connections) {
-            if (c.isServer())
-                c.writeMsg(ControlSolution.sendServerAnnounce());
+            if (c.isServer()) {
+                c.writeMsg(ControlSolution.sendServerAnnounce());               
+            }
         }
+        //new change
+        for (Connection c : connections) {
+            if (!c.isServer()) {
+                String isRedir = ControlSolution.sendRedirect();
+                if (isRedir != "false") {
+                	c.writeMsg(isRedir);
+                }
+                break;
+            }
+        }
+        //
         return false;
     }
 
