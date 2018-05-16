@@ -45,6 +45,7 @@ public class Control extends Thread {
     private static Number upperServerPort = null;
     private static boolean isRootServer = false;
     protected static Control control = null;
+    int presentage = 20;
 
     public static Control getInstance() {
         if (control == null) {
@@ -284,14 +285,18 @@ public class Control extends Thread {
             }
         }
         //new change
-        for (Connection c : connections) {
-            if (!c.isServer()) {
-                String isRedir = ControlSolution.sendRedirect();
-                if (isRedir != "false") {
-                	c.writeMsg(isRedir);
-                }
-                break;
-            }
+        
+        boolean redirFlag = ControlSolution.isInProba(presentage);
+        if (redirFlag) {
+        	for (Connection c : connections) {
+        		if (!c.isServer()) {
+        			String isRedir = ControlSolution.sendRedirect();
+        			if (isRedir != "false") {
+        				c.writeMsg(isRedir);
+        			}
+        			break;
+        		}
+        	}
         }
         //
         // update server state
