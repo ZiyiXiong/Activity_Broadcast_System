@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
@@ -34,6 +33,7 @@ public class Control extends Thread {
     private static Listener listener;
     private static String serverID;
     private static ArrayList<Map<String, String>> interconnectedServers;
+    private static ArrayList<Map<String, String>> interconnectedServersBuff; // new buff
     private static ArrayList<String> authenticatedServers; // <socketAddress>
     private static Map<String, String> registeredClients; // <username, secret>
     private static Map<String, Connection> registeringClients; // <username, con>
@@ -59,6 +59,7 @@ public class Control extends Thread {
         connections = new ArrayList<Connection>();
         // initialize the interconnected-servers list
         interconnectedServers = new ArrayList<Map<String, String>>();
+        interconnectedServersBuff = new ArrayList<Map<String, String>>();
         // initialize the serverID
         serverID = Settings.nextSecret();
         // initialize the authenticated-servers list
@@ -71,10 +72,10 @@ public class Control extends Thread {
         loggedinClients = new HashMap<String, String>();
         // initialize the anonymous loggedin clients
         loggedinAnonymous = new ArrayList<String>();
-        // initial backup and upper server address;
+        // new initial backup and upper server address;
         if (Settings.getRemoteHostname() != null) {
         	upperServerName = Settings.getRemoteHostname();
-        	upperServerName = Settings.getRemoteHostname();
+        	upperServerPort = (Number)(new Integer(Settings.getRemotePort()));
         } else {
         	setRootServer();
         }
@@ -200,13 +201,13 @@ public class Control extends Thread {
     public synchronized void addConnnectedServer(
             Map<String, String> serverState) {
         if (!term)
-            interconnectedServers.add(serverState);
+            interconnectedServersBuff.add(serverState);
     }
     
     public synchronized void removeConnectedServer(
             Map<String, String> serverState) {
         if (!term)
-            interconnectedServers.remove(serverState);
+            interconnectedServersBuff.remove(serverState);
     }
 
     public synchronized void addRegisteringClient(String username,
@@ -277,16 +278,21 @@ public class Control extends Thread {
         listener.setTerm(true);
     }
 
-    public boolean doActivity() {
+    @SuppressWarnings("unchecked")
+	public boolean doActivity() {
         for (Connection c : connections) {
             if (c.isServer())
                 c.writeMsg(ControlSolution.sendServerAnnounce());
         }
-        log.debug("Server announce");
+        interconnectedServers.clear();
+        interconnectedServers = (ArrayList<Map<String, String>>)interconnectedServersBuff.clone();
+        interconnectedServersBuff.clear();
+        // State report
+        log.debug("--Server announce");
         for (Map<String, String> server : interconnectedServers) {
         	log.debug("----" + server.get("port") + ": " + server.get("load"));
         }
-        log.debug("Redirect Info");
+        log.debug("--Redirect Info");
         log.debug("----upper: " + upperServerName + ":" + upperServerPort);
         log.debug("----backup: " + backupServerName + ":" + backupServerPort);
         return false;
@@ -302,6 +308,9 @@ public class Control extends Thread {
 
     public final ArrayList<Map<String, String>> getInterconnectedServers() {
         return interconnectedServers;
+    }
+    public final ArrayList<Map<String, String>> getInterconnectedServersBuff() {
+        return interconnectedServersBuff;
     }
 
     public final ArrayList<String> getAuthenticatedServers() {
@@ -416,7 +425,7 @@ public class Control extends Thread {
 		setUpperServerPort(null);
 	}
 	
-	public void cleanServerStatesList(){
+/*	public void cleanServerStatesList(){
 		Iterator<Map<String,String>> iter = interconnectedServers.iterator();
 		while(iter.hasNext()) {
 			Map<String,String> serverState = iter.next();
@@ -430,6 +439,7 @@ public class Control extends Thread {
 				}
 			}
 		}
-	}
+	}  */
+	
 }
 
