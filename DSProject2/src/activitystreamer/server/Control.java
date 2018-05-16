@@ -33,11 +33,17 @@ public class Control extends Thread {
     private static Listener listener;
     private static String serverID;
     private static ArrayList<Map<String, String>> interconnectedServers;
+    private static ArrayList<Map<String, String>> interconnectedServersBuff; // new buff
     private static ArrayList<String> authenticatedServers; // <socketAddress>
     private static Map<String, String> registeredClients; // <username, secret>
     private static Map<String, Connection> registeringClients; // <username, con>
     private static Map<String, String> loggedinClients; // <username:secret, socketAddress>
     private static ArrayList<String> loggedinAnonymous; // <socketAddress>
+    private static String backupServerName = null;
+    private static Number backupServerPort = null;
+    private static String upperServerName = null;
+    private static Number upperServerPort = null;
+    private static boolean isRootServer = false;
 
     protected static Control control = null;
 
@@ -53,6 +59,7 @@ public class Control extends Thread {
         connections = new ArrayList<Connection>();
         // initialize the interconnected-servers list
         interconnectedServers = new ArrayList<Map<String, String>>();
+        interconnectedServersBuff = new ArrayList<Map<String, String>>();
         // initialize the serverID
         serverID = Settings.nextSecret();
         // initialize the authenticated-servers list
@@ -65,6 +72,13 @@ public class Control extends Thread {
         loggedinClients = new HashMap<String, String>();
         // initialize the anonymous loggedin clients
         loggedinAnonymous = new ArrayList<String>();
+        // new initial backup and upper server address;
+        if (Settings.getRemoteHostname() != null) {
+        	upperServerName = Settings.getRemoteHostname();
+        	upperServerPort = (Number)(new Integer(Settings.getRemotePort()));
+        } else {
+        	setRootServer();
+        }
         // start a listener
         try {
             listener = new Listener();
@@ -123,6 +137,10 @@ public class Control extends Thread {
             return ControlSolution.receiveActivityMessage(con, msg);
         case "INVALID_MESSAGE":
             return ControlSolution.receiveInvalidMessage(con, msg);
+        case "BACKUP_SERVER":
+        	return ControlSolution.receiveBackupServer(con, msg);
+        case "AUTHENTICATION_SUCC":
+        	return ControlSolution.receiveAuthenticationSucc(con, msg);
         case "": // received message do not have command field
             return true;
         default: // unknown command
@@ -156,6 +174,7 @@ public class Control extends Thread {
         Connection c = new Connection(s);
         c.writeMsg(ControlSolution.sendAuthenticate());
         c.setServer(true);
+        c.setInitialServer();
         connections.add(c);
         authenticatedServers.add(Settings.socketAddress(s));
         return c;
@@ -182,13 +201,13 @@ public class Control extends Thread {
     public synchronized void addConnnectedServer(
             Map<String, String> serverState) {
         if (!term)
-            interconnectedServers.add(serverState);
+            interconnectedServersBuff.add(serverState);
     }
     
     public synchronized void removeConnectedServer(
             Map<String, String> serverState) {
         if (!term)
-            interconnectedServers.remove(serverState);
+            interconnectedServersBuff.remove(serverState);
     }
 
     public synchronized void addRegisteringClient(String username,
@@ -246,7 +265,7 @@ public class Control extends Thread {
                 break;
             }
             if (!term) {
-                log.debug("doing activity");
+                //log.debug("doing activity");
                 term = doActivity();
             }
 
@@ -259,11 +278,23 @@ public class Control extends Thread {
         listener.setTerm(true);
     }
 
-    public boolean doActivity() {
+    @SuppressWarnings("unchecked")
+	public boolean doActivity() {
         for (Connection c : connections) {
             if (c.isServer())
                 c.writeMsg(ControlSolution.sendServerAnnounce());
         }
+        interconnectedServers.clear();
+        interconnectedServers = (ArrayList<Map<String, String>>)interconnectedServersBuff.clone();
+        interconnectedServersBuff.clear();
+        // State report
+        log.debug("--Server announce");
+        for (Map<String, String> server : interconnectedServers) {
+        	log.debug("----" + server.get("port") + ": " + server.get("load"));
+        }
+        log.debug("--Redirect Info");
+        log.debug("----upper: " + upperServerName + ":" + upperServerPort);
+        log.debug("----backup: " + backupServerName + ":" + backupServerPort);
         return false;
     }
 
@@ -277,6 +308,9 @@ public class Control extends Thread {
 
     public final ArrayList<Map<String, String>> getInterconnectedServers() {
         return interconnectedServers;
+    }
+    public final ArrayList<Map<String, String>> getInterconnectedServersBuff() {
+        return interconnectedServersBuff;
     }
 
     public final ArrayList<String> getAuthenticatedServers() {
@@ -302,4 +336,110 @@ public class Control extends Thread {
     public final String getServerID() {
         return serverID;
     }
+    
+    public final String getUpperServerName() {
+    	return upperServerName;
+    }
+    public final Number getUpperServerPort() {
+    	return upperServerPort;
+    }
+    public final void setUpperServerName(String sName) {
+    	upperServerName = sName;
+    }
+    public final void setUpperServerPort(Number iPort) {
+    	upperServerPort = iPort;
+    }
+    public final String getBackupServerName() {
+    	return backupServerName;
+    }
+    public final Number getBackupServerPort() {
+    	return backupServerPort;
+    }
+    public final void setBackupServerName(String sName) {
+    	backupServerName = sName;
+    }
+    public final void setBackupServerPort(Number iPort) {
+    	backupServerPort = iPort;
+    }
+
+    public final void setRootServer() {
+    	isRootServer = true;
+    }
+    public final boolean isRootServer() {
+    	return isRootServer;
+    }
+    
+	public void crashRedirect() {
+		// TODO Auto-generated method stub
+		// initial server crash callback method
+		
+		try {	// try to reconnect to origin upper server
+            outgoingConnection(new Socket(upperServerName,
+                    upperServerPort.intValue()));
+        } catch (IOException eOrigin) {
+            log.error("failed to reconnect to origin server "
+                    + upperServerName + ":"
+                    + upperServerPort + " :" + eOrigin);
+            setUpperServerName(null);
+            setUpperServerPort(null);
+            try {	// origin server unaccessible, try backup server
+            	if (backupServerName != null // have backup server
+            			|| backupServerPort != null) {
+            		Connection con = outgoingConnection(new Socket(backupServerName,
+                            backupServerPort.intValue()));
+            		setUpperServerName(backupServerName);
+            		setUpperServerPort(backupServerPort);
+            		setBackupServerName(null);
+            		setBackupServerPort(null);
+            		
+            		ControlSolution.broadcast(con, ControlSolution.sendBackupServer(), true, true);
+            	} else {
+            		setRootServer();
+            		log.warn("Upper server crashed, becoming root server with no outgoing connection");
+            	}
+            } catch (IOException eBackup) {
+                log.error("failed to reconnect to backup server "
+                        + backupServerName + ":"
+                        + backupServerPort + " :" + eBackup);
+                System.exit(-1);
+            }
+        }
+		
+	}
+
+	public void updateBackup() {  // only for root server to find a upper server
+		// TODO Auto-generated method stub
+		if (!isRootServer())
+			return;
+		for(Connection c : connections) {
+			if (c.isServer()) {
+				setUpperServerName(c.getConName());
+				setUpperServerPort(c.getConPort());
+			}
+			log.debug("set "+c.getConPort()+" as upper server of root server");
+			ControlSolution.broadcast(null, ControlSolution.sendBackupServer(), true, false);
+			return;
+		}
+		log.debug("no proper server to be upper server, waiting for incoming server");
+		setUpperServerName(null);
+		setUpperServerPort(null);
+	}
+	
+/*	public void cleanServerStatesList(){
+		Iterator<Map<String,String>> iter = interconnectedServers.iterator();
+		while(iter.hasNext()) {
+			Map<String,String> serverState = iter.next();
+			for (Connection c : connections) {
+				if (serverState.get("hostname").equals(c.getConName()) 
+						&& serverState.get("port").equals(c.getConPort().toString())) {
+					break;
+				} else {
+					iter.remove();
+					log.debug("clean server state of "+ c.getConPort());
+				}
+			}
+		}
+	}  */
+	
 }
+
