@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
@@ -34,7 +33,7 @@ public class Control extends Thread {
     private static Listener listener;
     private static String serverID;
     private static ArrayList<Map<String, String>> interconnectedServers;
-    private static ArrayList<Map<String, String>> interconnectedServersBuff;
+    private static ArrayList<Map<String, String>> interconnectedServersBuff; // new buff
     private static ArrayList<String> authenticatedServers; // <socketAddress>
     private static Map<String, String> registeredClients; // <username, secret>
     private static Map<String, Connection> registeringClients; // <username, con>
@@ -73,10 +72,10 @@ public class Control extends Thread {
         loggedinClients = new HashMap<String, String>();
         // initialize the anonymous loggedin clients
         loggedinAnonymous = new ArrayList<String>();
-        // initial backup and upper server address;
+        // new initial backup and upper server address;
         if (Settings.getRemoteHostname() != null) {
         	upperServerName = Settings.getRemoteHostname();
-        	upperServerName = Settings.getRemoteHostname();
+        	upperServerPort = (Number)(new Integer(Settings.getRemotePort()));
         } else {
         	setRootServer();
         }
