@@ -44,7 +44,6 @@ public class Control extends Thread {
     private static String upperServerName = null;
     private static Number upperServerPort = null;
     private static boolean isRootServer = false;
-
     protected static Control control = null;
 
     public static Control getInstance() {
@@ -73,7 +72,7 @@ public class Control extends Thread {
         // initialize the anonymous loggedin clients
         loggedinAnonymous = new ArrayList<String>();
         // new initial backup and upper server address;
-        if (Settings.getRemoteHostname() != null) {
+		if (Settings.getRemoteHostname() != null) {
         	upperServerName = Settings.getRemoteHostname();
         	upperServerPort = (Number)(new Integer(Settings.getRemotePort()));
         } else {
@@ -278,12 +277,24 @@ public class Control extends Thread {
         listener.setTerm(true);
     }
 
-    @SuppressWarnings("unchecked")
-	public boolean doActivity() {
+    public boolean doActivity() {
         for (Connection c : connections) {
-            if (c.isServer())
-                c.writeMsg(ControlSolution.sendServerAnnounce());
+            if (c.isServer()) {
+                c.writeMsg(ControlSolution.sendServerAnnounce());               
+            }
         }
+        //new change
+        for (Connection c : connections) {
+            if (!c.isServer()) {
+                String isRedir = ControlSolution.sendRedirect();
+                if (isRedir != "false") {
+                	c.writeMsg(isRedir);
+                }
+                break;
+            }
+        }
+        //
+        // update server state
         interconnectedServers.clear();
         interconnectedServers = (ArrayList<Map<String, String>>)interconnectedServersBuff.clone();
         interconnectedServersBuff.clear();
@@ -336,8 +347,7 @@ public class Control extends Thread {
     public final String getServerID() {
         return serverID;
     }
-    
-    public final String getUpperServerName() {
+        public final String getUpperServerName() {
     	return upperServerName;
     }
     public final Number getUpperServerPort() {
@@ -424,22 +434,4 @@ public class Control extends Thread {
 		setUpperServerName(null);
 		setUpperServerPort(null);
 	}
-	
-/*	public void cleanServerStatesList(){
-		Iterator<Map<String,String>> iter = interconnectedServers.iterator();
-		while(iter.hasNext()) {
-			Map<String,String> serverState = iter.next();
-			for (Connection c : connections) {
-				if (serverState.get("hostname").equals(c.getConName()) 
-						&& serverState.get("port").equals(c.getConPort().toString())) {
-					break;
-				} else {
-					iter.remove();
-					log.debug("clean server state of "+ c.getConPort());
-				}
-			}
-		}
-	}  */
-	
 }
-

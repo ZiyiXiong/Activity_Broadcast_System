@@ -17,6 +17,7 @@ package activitystreamer.server;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -64,7 +65,7 @@ public class ControlSolution {
      */
     public static boolean receiveAuthenticate(Connection con, String msg) {
         log.debug("received an AUTHENTICATE from "
-        		+ con.getConName() + ":" + con.getConPort());
+                + Settings.socketAddress(con.getSocket()));
         JSONObject authenticate = getJSON(con, msg);
         if (authenticate == null) {
             return true;
@@ -135,7 +136,7 @@ public class ControlSolution {
     public static boolean receiveAuthenticationFail(Connection con,
             String msg) {
         log.debug("received an AUTHENTICATION_FAIL from "
-        		+ con.getConName() + ":" + con.getConPort());
+                + Settings.socketAddress(con.getSocket()));
         JSONObject authenFail = getJSON(con, msg);
         if (authenFail == null) {
             return true;
@@ -170,7 +171,7 @@ public class ControlSolution {
      */
     public static boolean receiveInvalidMessage(Connection con, String msg) {
         log.debug("received an INVALID_MESSAGE from "
-        		+ con.getConName() + ":" + con.getConPort());
+                + Settings.socketAddress(con.getSocket()));
         JSONObject invalidMsg = getJSON(con, msg);
         if (invalidMsg == null) {
             return true;
@@ -204,7 +205,7 @@ public class ControlSolution {
      */
     public static boolean receiveServerAnnounce(Connection con, String msg) {
         //log.debug("received an SERVER_ANNOUNCE from "
-         //       + con.getConName() + ":" + con.getConPort());
+        //        + Settings.socketAddress(con.getSocket()));
         if (!validServer(con)) {
             return true;
         }
@@ -227,7 +228,6 @@ public class ControlSolution {
         //log.debug("received an announcement from " + severAnnon.get("id")
         //        + " load " + severAnnon.get("load") + " at "
         //        + severAnnon.get("hostname") + ":" + severAnnon.get("port"));
-        //log.debug("SERVER_ANNOUNCE from " + severAnnon.get("port") + " load:" + severAnnon.get("load"));
         updateSeverStates(severAnnon);
         broadcast(con, msg, true, true);
         return false;
@@ -275,7 +275,12 @@ public class ControlSolution {
                     Settings.socketAddress(con.getSocket()));
             response = sendLoginSucc("anonymous");
             con.writeMsg(response);
-            sendRedirect(con);
+            //new change
+            String isRedir = sendRedirect();
+            if (isRedir != "false") {
+            	con.writeMsg(isRedir);
+            }            
+            //
             return false;
         } else {
             if (!hasValidKV("secret", login, con)) {
@@ -299,7 +304,12 @@ public class ControlSolution {
                     Settings.socketAddress(con.getSocket()));
             response = sendLoginSucc(username);
             con.writeMsg(response);
-            sendRedirect(con);
+            //new change
+            String isRedir = sendRedirect();
+            if (isRedir != "false") {
+            	con.writeMsg(isRedir);
+            }
+            //
             return false;
         }
     }
@@ -309,24 +319,94 @@ public class ControlSolution {
      * then send)
      */
     @SuppressWarnings("unchecked")
-    private static void sendRedirect(Connection con) {
+    public static String sendRedirect() {
         ArrayList<Connection> connections = Control.getInstance()
                 .getConnections();
+        ArrayList<Map<String, String>> candidate = new ArrayList<Map<String, String>>();
         int localLoad = localLoad(connections);
         ArrayList<Map<String, String>> interconnectedServers = Control
                 .getInstance().getInterconnectedServers();
+        boolean isRedir = false;
         for (Map<String, String> server : interconnectedServers) {
             int difference = localLoad - Integer.parseInt(server.get("load"));
             if (difference >= 2) {
-                JSONObject redirInfo = new JSONObject();
-                redirInfo.put("command", "REDIRECT");
-                redirInfo.put("hostname", server.get("hostname"));
-                redirInfo.put("port", server.get("port"));
-                con.writeMsg(redirInfo.toJSONString());
-                return;
+            	candidate.add(server);
+            	isRedir = true;
             }
         }
+        
+        if(isRedir) {
+            Map<String, String> objectServer = aimServer(candidate, localLoad);
+            JSONObject redirInfo = new JSONObject();
+            redirInfo.put("command", "REDIRECT");
+            redirInfo.put("hostname", objectServer.get("hostname"));
+            redirInfo.put("port", objectServer.get("port"));
+            return redirInfo.toJSONString();
+        }
+        else {
+            return "false";
+        }
     }
+    
+    //new addition
+    public static boolean isInProba(int presentage) {
+    	Random r = new Random();  
+    	int n = r.nextInt(100);  
+    	boolean isRedirFlag = false;
+    	if(n < presentage) {
+    		isRedirFlag = true;
+    	}
+    	return isRedirFlag;
+    }
+    
+    private static Map<String, String> aimServer(ArrayList<Map<String, String>> candidate, int localLoad) {
+    	ArrayList<Map<String, String>> maxServers = new ArrayList<Map<String, String>>();
+    	Map<String, String> objectServer = new HashMap<String, String>();
+    	int maxLoad = 0;
+    	int presentage = 66;
+
+        for (Map<String, String> server : candidate) {
+            int difference = localLoad - Integer.parseInt(server.get("load"));
+            if (difference >= 2) {
+            	if (difference > maxLoad) {
+            		maxLoad = difference;
+            	}
+            }
+        }
+        
+        for (Map<String, String> server : candidate) {
+        	int difference = localLoad - Integer.parseInt(server.get("load"));
+        	if (difference == maxLoad) {
+        		maxServers.add(server);
+        	}
+        }
+        
+        if(isInProba(presentage)) {
+        	int maxServerIndex;
+        	Random selectedServer = new Random();  
+        	maxServerIndex = selectedServer.nextInt(maxServers.size());
+        	objectServer = maxServers.get(maxServerIndex);
+        }
+        else {        	
+        	int selectedServerIndex;
+        	candidate.removeAll(maxServers);
+        	Random selectedServer = new Random(); 
+        	if (candidate.size() != 0) {
+              	selectedServerIndex = selectedServer.nextInt(candidate.size());
+            	objectServer = candidate.get(selectedServerIndex);
+        	}
+        	else {
+            	int maxServerIndex;
+            	maxServerIndex = selectedServer.nextInt(maxServers.size());
+            	objectServer = maxServers.get(maxServerIndex);
+        	}
+        }
+    	
+    	return objectServer;
+    }
+    //
+    
+    
     
     /**
      * send a login fail message to a client
@@ -404,7 +484,7 @@ public class ControlSolution {
             con.writeMsg(response);
             return true;
         }
-        if (Control.getInstance().getInterconnectedServers().size() == 0) { //??
+        if (Control.getInstance().getInterconnectedServers().size() == 0) {
             Control.getInstance().addRegisteredClient(username, secret);
             response = sendRegisterSucc(username);
             con.writeMsg(response);
@@ -607,7 +687,7 @@ public class ControlSolution {
      */
     public static boolean receiveActivityMessage(Connection con, String msg) {
         log.debug("received an ACTIVITY_MESSAGE from "
-        		+ con.getConName() + ":" + con.getConPort());
+                + Settings.socketAddress(con.getSocket()));
         JSONObject actMsg = getJSON(con, msg);
         if (actMsg == null) {
             return true;
@@ -656,7 +736,7 @@ public class ControlSolution {
     public static boolean receiveActivityBroadcast(Connection con,
             String msg) {
         log.debug("received an ACTIVITY_BROADCAST from "
-        		+ con.getConName() + ":" + con.getConPort());
+                + Settings.socketAddress(con.getSocket()));
         if (!validServer(con)) {
             return true;
         }
@@ -760,7 +840,7 @@ public class ControlSolution {
                 .getConnections();
         String receivedFrom = (con == null)?(null):(Settings.socketAddress(con.getSocket()));
         if (withinServers) {
-            broadcastWithinServers(msg, forwardMsg, connections,
+            broadcastWithinServers(con, msg, forwardMsg, connections,
                     receivedFrom);
         } else {
             broadcastToAll(msg, forwardMsg, connections, receivedFrom);
@@ -790,7 +870,7 @@ public class ControlSolution {
      * broadcast just within servers
      * @param forwardMsg whether needs to send to the sender
      */
-    private static void broadcastWithinServers(String msg,
+    private static void broadcastWithinServers(Connection con, String msg,
             boolean forwardMsg, ArrayList<Connection> connections,
             String receivedFrom) {
         if (forwardMsg) {
@@ -883,7 +963,6 @@ public class ControlSolution {
         }
         return sCmd;
     }
-
     /**
      * send backup server address to another server
      */
@@ -908,7 +987,6 @@ public class ControlSolution {
         		|| notContainsField("backupport", jMsg, con)) {
             return true;
         }
-        //Integer iPort = new Integer(Settings.getLocalPort());
         if (Settings.getLocalHostname().equals(jMsg.get("backupname"))
         		&& Integer.toString(Settings.getLocalPort()).equals(jMsg.get("backupport").toString())) {
             Control.getInstance().setBackupServerName(null);
@@ -950,8 +1028,6 @@ public class ControlSolution {
         }
         con.setConName((String)jMsg.get("uppername"));
         con.setConPort((Number)jMsg.get("upperport"));
-        //Integer iRPort = new Integer(Settings.getRemotePort());
-        //Integer iLPort = new Integer(Settings.getLocalPort());
         if (Settings.getLocalHostname().equals(jMsg.get("backupname"))
         		&& Integer.toString(Settings.getLocalPort()).equals(jMsg.get("backupport").toString())) {
         	Control.getInstance().setBackupServerName(null);
