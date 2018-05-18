@@ -1,0 +1,151 @@
+@ Control.java
+New import
+	import activitystreamer.server.MsgBuff;
+
+New object in Control.class
+	private static Map<String, MsgBuff> msgBuffMap; //msg_in_order <username, msgBuff>
+	
+New initial in Control()
+	msgBuffMap = new HashMap<String, MsgBuff>();
+
+New getter of msgBuffMap
+    public final Map<String, MsgBuff> getMsgBuffMap() {
+    	return msgBuffMap;
+    }
+
+@ ControlSolution.java
+Add block about msg_in_order in receivedActivityMessage() to gen order and cache the msg
+    public static boolean receiveActivityMessage(Connection con, String msg) {
+        log.debug("received an ACTIVITY_MESSAGE from "
+                + Settings.socketAddress(con.getSocket()));
+        JSONObject actMsg = getJSON(con, msg);
+        if (actMsg == null) {
+            return true;
+        }
+        if (!hasValidKV("username", actMsg, con)) {
+            return true;
+        }
+        String username = (String) actMsg.get("username");
+        if (!username.equals("anonymous")) {
+            if (!hasValidKV("secret", actMsg, con)) {
+                return true;
+            }
+        }
+        if (notContainsField("activity", actMsg, con)) {
+            return true;
+        }
+
+        String response;
+        JSONObject activity = (JSONObject) actMsg.get("activity");
+        if (activity == null) {
+            response = sendInvalidMessage(
+                    "the received message did not contain the activity value");
+            con.writeMsg(response);
+            return true;
+        }
+        if (!validClient(username, actMsg, con)) {
+            return true;
+        }
+        JSONObject processedAct = processActivity(activity, username);
+        // msg_in_order ****************************************************
+        // store in buff
+        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        String clientAddr = Settings.socketAddress(con.getSocket()); //use client address to identify user
+        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
+        	msgBuffMap.put(clientAddr, new MsgBuff());
+        int order = msgBuffMap.get(clientAddr).getNextInMsgOrder(); // generated order
+        if(!msgBuffMap.get(clientAddr).put(sendActivityBroadcast(processedAct,clientAddr,order))) {
+        	log.warn("wrong msg with previous order received");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
+        	return true;
+        }
+        // flush the message to broadcast
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, false);
+        	// broadcast to all server
+        // msg_in_order ***************************************************
+
+        return false;
+    }
+
+
+Rewrite sendActivityBroadcast() to help order the msg
+    @SuppressWarnings("unchecked")
+    private static JSONObject sendActivityBroadcast(JSONObject processedAct,String clientAddr, int order) { //override
+        JSONObject actBroadcast = new JSONObject();
+        actBroadcast.put("command", "ACTIVITY_BROADCAST");
+        actBroadcast.put("activity", processedAct);
+        // msg_in_order ********************************
+        actBroadcast.put("client", clientAddr);
+        actBroadcast.put("order", order);
+        // msg_in_order ********************************
+        return actBroadcast;
+    } 
+    
+    
+Add block in receivedActivityBroadcast() to cache the msg and reorder
+    public static boolean receiveActivityBroadcast(Connection con,
+            String msg) {
+        log.debug("received an ACTIVITY_BROADCAST from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject actBroadCast = getJSON(con, msg);
+        if (actBroadCast == null) {
+            return true;
+        }
+        if (notContainsField("activity", actBroadCast, con)) {
+            return true;
+        }
+        JSONObject activity = (JSONObject) actBroadCast.get("activity");
+        if (activity == null) {
+            String response = sendInvalidMessage(
+                    "the received message did not contain the activity value");
+            con.writeMsg(response);
+            return true;
+        }
+        // msg_in_order ***********************************************
+ 		Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        String clientAddr = (String)actBroadCast.get("client");
+        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
+        	msgBuffMap.put(clientAddr, new MsgBuff());
+        if(!msgBuffMap.get(clientAddr).put(actBroadCast)) { // put failed, wrong order
+        	log.warn("wrong msg with previous order received");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
+        	return true;
+        }
+        // flush the message to broadcast
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, true); 
+        	// broadcast to all except the con sent msg        
+        // msg_in_order ***************************************************
+        return false;
+    }
+
+
+Add block in receivedLogout() to free the buffer when client logout
+    public static boolean receiveLogout(Connection con) {
+        log.debug("received a LOGOUT from "
+                + Settings.socketAddress(con.getSocket()));
+        Map<String, String> loggedinClients = Control.getInstance()
+                .getLoggedinClients();
+        String clientAddr = Settings.socketAddress(con.getSocket());
+        for (String key : loggedinClients.keySet()) {
+            if (clientAddr.equals(loggedinClients.get(key))) {
+                Control.getInstance().removeLoggedinClient(key);
+                break;
+            }
+        }
+        if (Control.getInstance().getLoggedinAnonymous()
+                .contains(clientAddr)) {
+            Control.getInstance().removeLoggedinAnonymous(clientAddr);
+        }
+        // msg_in_order *************************************
+        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        if(msgBuffMap.containsKey(clientAddr))
+        	msgBuffMap.remove(clientAddr);
+        // msg_in_order **************************************
+        return true;
+    }
+

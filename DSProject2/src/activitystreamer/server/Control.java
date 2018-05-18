@@ -25,6 +25,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import activitystreamer.util.Settings;
+import activitystreamer.server.MsgBuff;
 
 public class Control extends Thread {
     private static final Logger log = LogManager.getLogger();

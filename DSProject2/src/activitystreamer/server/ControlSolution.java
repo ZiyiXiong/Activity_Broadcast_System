@@ -727,15 +727,18 @@ public class ControlSolution {
         // store in buff
         Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
         String clientAddr = Settings.socketAddress(con.getSocket()); //use client address to identify user
-        int order = 0; // generate order
         if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
         	msgBuffMap.put(clientAddr, new MsgBuff());
-        order = msgBuffMap.get(clientAddr).getNextInMsgOrder();
-        msgBuffMap.get(clientAddr).put(sendActivityBroadcast(processedAct,clientAddr,order));
-        // flush the message to broadcast
-        while(msgBuffMap.get(clientAddr).hasNext()) {
-        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, false);
+        int order = msgBuffMap.get(clientAddr).getNextInMsgOrder(); // generated order
+        if(!msgBuffMap.get(clientAddr).put(sendActivityBroadcast(processedAct,clientAddr,order))) {
+        	log.warn("wrong msg with previous order received");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
+        	return true;
         }
+        // flush the message to broadcast
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, false);
+        	// broadcast to all server
         // msg_in_order
 
         return false;
@@ -746,8 +749,8 @@ public class ControlSolution {
         JSONObject actBroadcast = new JSONObject();
         actBroadcast.put("command", "ACTIVITY_BROADCAST");
         actBroadcast.put("activity", processedAct);
-        actBroadcast.put("client", clientAddr);
-        actBroadcast.put("order", order);
+        actBroadcast.put("client", clientAddr); // msg_in_order
+        actBroadcast.put("order", order); // msg_in_order
         return actBroadcast;
     }
     
@@ -784,14 +787,13 @@ public class ControlSolution {
         	msgBuffMap.put(clientAddr, new MsgBuff());
         if(!msgBuffMap.get(clientAddr).put(actBroadCast)) { // put failed, wrong order
         	log.warn("wrong msg with previous order received");
-        	sendInvalidMessage("wrong message with previous order");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
         	return true;
         }
-        
         // flush the message to broadcast
-        while(msgBuffMap.get(clientAddr).hasNext()) {
-        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, true);
-        }
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, true); 
+        	// broadcast to all except the con sent msg
         // msg_in_order
         return false;
     }
