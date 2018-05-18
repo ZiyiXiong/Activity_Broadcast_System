@@ -25,6 +25,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import activitystreamer.util.Settings;
+import activitystreamer.server.MsgBuff;
 
 public class Control extends Thread {
     private static final Logger log = LogManager.getLogger();
@@ -44,6 +45,7 @@ public class Control extends Thread {
     private static String upperServerName = null;
     private static Number upperServerPort = null;
     private static boolean isRootServer = false;
+    private static Map<String, MsgBuff> msgBuffMap; //msg_in_order <username, msgBuff>
     protected static Control control = null;
     int presentage = 20;
 
@@ -72,6 +74,8 @@ public class Control extends Thread {
         loggedinClients = new HashMap<String, String>();
         // initialize the anonymous loggedin clients
         loggedinAnonymous = new ArrayList<String>();
+        // msg_in_order
+        msgBuffMap = new HashMap<String, MsgBuff>();
         // new initial backup and upper server address;
 		if (Settings.getRemoteHostname() != null) {
         	upperServerName = Settings.getRemoteHostname();
@@ -383,7 +387,10 @@ public class Control extends Thread {
     public final boolean isRootServer() {
     	return isRootServer;
     }
-    
+    //msg_in_order
+    public final Map<String, MsgBuff> getMsgBuffMap() {
+    	return msgBuffMap;
+    }
 	public void crashRedirect() {
 		// TODO Auto-generated method stub
 		// initial server crash callback method

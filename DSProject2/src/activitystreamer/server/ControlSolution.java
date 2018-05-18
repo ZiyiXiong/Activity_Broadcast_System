@@ -451,6 +451,12 @@ public class ControlSolution {
                 .contains(clientAddr)) {
             Control.getInstance().removeLoggedinAnonymous(clientAddr);
         }
+        // msg_in_order
+        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        if(msgBuffMap.containsKey(clientAddr)) {
+        	msgBuffMap.remove(clientAddr);
+        }
+        //
         return true;
     }
 
@@ -704,6 +710,7 @@ public class ControlSolution {
         if (notContainsField("activity", actMsg, con)) {
             return true;
         }
+
         String response;
         JSONObject activity = (JSONObject) actMsg.get("activity");
         if (activity == null) {
@@ -716,17 +723,35 @@ public class ControlSolution {
             return true;
         }
         JSONObject processedAct = processActivity(activity, username);
-        String actBroadcast = sendActivityBroadcast(processedAct);
-        broadcast(con, actBroadcast, false, false);
+        // msg_in_order
+        // store in buff
+        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        String clientAddr = Settings.socketAddress(con.getSocket()); //use client address to identify user
+        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
+        	msgBuffMap.put(clientAddr, new MsgBuff());
+        int order = msgBuffMap.get(clientAddr).getNextInMsgOrder(); // generated order
+        if(!msgBuffMap.get(clientAddr).put(sendActivityBroadcast(processedAct,clientAddr,order))) {
+        	log.warn("wrong msg with previous order received");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
+        	return true;
+        }
+        // flush the message to broadcast
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, false);
+        	// broadcast to all server
+        // msg_in_order
+
         return false;
     }
     
     @SuppressWarnings("unchecked")
-    private static String sendActivityBroadcast(JSONObject processedAct) {
+    private static JSONObject sendActivityBroadcast(JSONObject processedAct,String clientAddr, int order) { //override
         JSONObject actBroadcast = new JSONObject();
         actBroadcast.put("command", "ACTIVITY_BROADCAST");
         actBroadcast.put("activity", processedAct);
-        return actBroadcast.toJSONString();
+        actBroadcast.put("client", clientAddr); // msg_in_order
+        actBroadcast.put("order", order); // msg_in_order
+        return actBroadcast;
     }
     
     /**
@@ -754,7 +779,22 @@ public class ControlSolution {
             con.writeMsg(response);
             return true;
         }
-        broadcast(con, msg, false, true);
+        // msg_in_order
+        // store in buff
+        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
+        String clientAddr = (String)actBroadCast.get("client");
+        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
+        	msgBuffMap.put(clientAddr, new MsgBuff());
+        if(!msgBuffMap.get(clientAddr).put(actBroadCast)) { // put failed, wrong order
+        	log.warn("wrong msg with previous order received");
+        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
+        	return true;
+        }
+        // flush the message to broadcast
+        while(msgBuffMap.get(clientAddr).hasNext())
+        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, true); 
+        	// broadcast to all except the con sent msg
+        // msg_in_order
         return false;
     }
 
