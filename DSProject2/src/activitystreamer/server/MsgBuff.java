@@ -10,10 +10,10 @@ public class MsgBuff {
     private int nextOutMsgOrder;
     private Map<Integer, JSONObject> jMsgList;
 
-    MsgBuff() {
+    MsgBuff(int order) {
         this.jMsgList = new HashMap<Integer, JSONObject>();
-        this.nextInMsgOrder = 0;
-        this.nextOutMsgOrder = 0;
+        this.nextInMsgOrder = order;
+        this.nextOutMsgOrder = order;
     }
 
     public int getNextInMsgOrder() {

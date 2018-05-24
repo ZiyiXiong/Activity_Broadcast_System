@@ -509,9 +509,9 @@ public class Control extends Thread {
             msgBuffMap.remove(clientAddr);
     }
     
-    public synchronized void addMsgBuff(String clientAddr) {
+    public synchronized void addMsgBuff(String clientAddr, int order) {
         if(!term)
-            msgBuffMap.put(clientAddr, new MsgBuff());
+            msgBuffMap.put(clientAddr, new MsgBuff(order));
     }
 
     public final void setTerm(boolean t) {

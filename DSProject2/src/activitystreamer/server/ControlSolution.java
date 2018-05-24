@@ -238,8 +238,8 @@ public class ControlSolution {
      * @return whether this connection should terminate or not
      */
     public static boolean receiveServerAnnounce(Connection con, String msg) {
-        log.debug("received a SERVER_ANNOUNCE from "
-                + Settings.socketAddress(con.getSocket()));
+        //log.debug("received a SERVER_ANNOUNCE from "
+        //        + Settings.socketAddress(con.getSocket()));
         if (!validServer(con)) {
             return true;
         }
@@ -255,9 +255,9 @@ public class ControlSolution {
                 || notContainsField("port", severAnnon, con)) {
             return true;
         }
-        log.debug("received an announcement from " + severAnnon.get("id")
-                + " load " + severAnnon.get("load") + " at "
-                + severAnnon.get("hostname") + ":" + severAnnon.get("port"));
+        //log.debug("received an announcement from " + severAnnon.get("id")
+        //        + " load " + severAnnon.get("load") + " at "
+        //        + severAnnon.get("hostname") + ":" + severAnnon.get("port"));
         updateSeverStates(severAnnon);
         broadcastWithinServers(con, msg, true);
         return false;
@@ -997,7 +997,7 @@ public class ControlSolution {
         String clientAddr = Settings.socketAddress(con.getSocket()); // use client address to identify user
         if (!Control.getInstance().getMsgBuffMap().containsKey(clientAddr)) {
             // not found in map, generate a new object
-            Control.getInstance().addMsgBuff(clientAddr);
+            Control.getInstance().addMsgBuff(clientAddr,0);
         }
         int order = Control.getInstance().getMsgBuffMap().get(clientAddr)
                 .getNextInMsgOrder(); // generated order
@@ -1078,8 +1078,9 @@ public class ControlSolution {
             return true;
         }
         String clientAddr = (String) actBroadCast.get("client");
+        int order = ((Number) actBroadCast.get("order")).intValue();
         if (!Control.getInstance().getMsgBuffMap().containsKey(clientAddr)) // not found in map, generate a new object
-            Control.getInstance().addMsgBuff(clientAddr);
+            Control.getInstance().addMsgBuff(clientAddr,order);
         if (!Control.getInstance().getMsgBuffMap().get(clientAddr)
                 .put(actBroadCast)) { // put failed, wrong order
             log.warn("wrong msg with previous order received");
