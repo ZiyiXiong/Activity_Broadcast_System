@@ -364,14 +364,18 @@ public class Control extends Thread {
             try { // original server unaccessible, try backup server
                 if (backupSvNameToUse != null // have backup server
                         && backupSvPortToUse != 0) {
-                    Connection con = outgoingConnection(
+                    Settings.setRemoteHostname(backupSvNameToUse);
+                    Settings.setRemotePort(backupSvPortToUse);
+                	Connection con = outgoingConnection(
                             new Socket(backupSvNameToUse, backupSvPortToUse));
-                    setBackupSvNameToSend(backupSvNameToUse);
-                    setBackupSvPortToSend(backupSvPortToUse);
-                    ControlSolution.broadcastWithinServers(con,
-                            ControlSolution.sendBackupServer(), true);
+
+                    //setBackupSvNameToSend(backupSvNameToUse);
+                    //setBackupSvPortToSend(backupSvPortToUse);
                     setBackupSvNameToUse(null);
                     setBackupSvPortToUse(0);
+                    //ControlSolution.broadcastWithinServers(con,
+                    //        ControlSolution.sendBackupServer(), true);
+                    
                 } else {
                     isRootServer = true;
                     chooseBackupSvToSend();
