@@ -17,7 +17,14 @@ public class Settings {
     private static int activityInterval = 5000; // milliseconds
     private static String username = "anonymous";
     private static String secret = null;
+    
+    // indicate how big the chance(the percentage) is to redirect a client
+    private static int redirectChance = 20; 
 
+    public static int getRedirectChance() {
+        return redirectChance;
+    }
+    
     public static int getLocalPort() {
         return localPort;
     }
