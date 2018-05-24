@@ -366,7 +366,7 @@ public class Control extends Thread {
                         && backupSvPortToUse != 0) {
                     Settings.setRemoteHostname(backupSvNameToUse);
                     Settings.setRemotePort(backupSvPortToUse);
-                	Connection con = outgoingConnection(
+                	outgoingConnection(
                             new Socket(backupSvNameToUse, backupSvPortToUse));
 
                     //setBackupSvNameToSend(backupSvNameToUse);
@@ -404,6 +404,10 @@ public class Control extends Thread {
                     ControlSolution.sendBackupServer(), false);
             return;
         }
+        setBackupSvNameToSend(null);
+        setBackupSvPortToSend(0);
+        setBackupSvNameToUse(null);
+        setBackupSvPortToUse(0);
         log.debug(
                 "no proper server to be upper server, waiting for incoming server");
     }

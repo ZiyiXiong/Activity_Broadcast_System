@@ -185,7 +185,9 @@ public class Connection extends Thread {
              */
             if (isSvOutgoingForSv) {
                 Control.getInstance().crashRedirect();
-            } else if (isServer) {
+            } else if (isServer 
+            		&& this.connectingSvName.equals((String) Control.getInstance().getBackupSvNameToSend()) 
+            		&& this.connectingSvPort == Control.getInstance().getBackupSvPortToSend()) {
                 Control.getInstance().chooseBackupSvToSend();
             }
         }
