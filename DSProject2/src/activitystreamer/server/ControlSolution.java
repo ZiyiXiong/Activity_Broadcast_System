@@ -15,6 +15,7 @@
 package activitystreamer.server;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -28,26 +29,37 @@ import org.json.simple.parser.ParseException;
 import activitystreamer.util.Settings;
 
 public class ControlSolution {
-    
+
     // the secret needed for a server to connect to our network
-    private static final String authenSecret = "group666";
+    private static String authenSecret;
     private static JSONParser parser = new JSONParser();
     private static final Logger log = LogManager.getLogger();
-    
+    private static Random random = new Random();
+
     /*
-     * For all methods who are capable of receiving messages, they first
-     * check the integrity of that message (does it contain certain fields
-     * and does each field contain values), then they do corresponding
-     * processing actions.
-     * 
-     * For all methods who are capable of sending messages, they don't
-     * actually send it. They just build a corresponding JSON Object 
-     * and return a String of that Object (pass the sending responsibility
-     * to the caller function)
+     * The preset percentage(chance) to redirect a client to a server with max load,
+     * aims to evenly distribute clients over servers as much as we can.
      */
-    
+    private static final int REDIRECT_TO_MAX_LOAD_SERVER = 77;
+
+    public static void setAuthenSecret(String secret) {
+        authenSecret = secret;
+    }
+
+    /*
+     * For all methods who are capable of receiving messages, they first check the
+     * integrity of that message (does it contain certain fields and does each field
+     * contain values), then they do corresponding processing actions.
+     * 
+     * For all methods who are capable of sending messages, they don't actually send
+     * it. They just build a corresponding JSON Object and return a String of that
+     * Object (pass the sending responsibility to the caller function)
+     */
+
     /**
-     * send authentication to another server when start up a new server
+     * Version 2: Generate authentication to another server when start up a new
+     * server. For this new version, add the host name and the listening port number
+     * in the authentication message.
      */
     @SuppressWarnings("unchecked")
     public static String sendAuthenticate() {
@@ -58,9 +70,17 @@ public class ControlSolution {
         authenticate.put("port", Integer.toString(Settings.getLocalPort()));
         return authenticate.toJSONString();
     }
-    
+
     /**
-     * when receive an authentication, handle the message
+     * Version 2: When receive an authentication, handle the message. For this new
+     * version, when the secret is correct, reply an "AUTHENTICATION_SUCCESS"
+     * message back, in order to let the opposite server (who send the
+     * authentication) to do some additional work (please see method
+     * "receiveAuthenticationSucc()"); What's more, if the recipient is the first
+     * server (does not have "backupSvNameToSend"), save the server host name and
+     * port number of the "authenticate" sender as the "backupSvNameToSend" and
+     * "backupSvPortToSend".
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveAuthenticate(Connection con, String msg) {
@@ -70,7 +90,9 @@ public class ControlSolution {
         if (authenticate == null) {
             return true;
         }
-        if (!hasValidKV("secret", authenticate, con)) {
+        if (!hasValidKV("secret", authenticate, con)
+                || !hasValidKV("hostname", authenticate, con)
+                || !hasValidKV("port", authenticate, con)) {
             return true;
         }
         String response;
@@ -89,19 +111,24 @@ public class ControlSolution {
         }
         Control.getInstance()
                 .addAuthenServer(Settings.socketAddress(con.getSocket()));
+
+        String hostname = (String) authenticate.get("hostname");
+        int port = Integer.parseInt((String) authenticate.get("port"));
+        con.setConnectingSvName(hostname);
+        con.setConnectingSvPort(port);
+        if (Control.getInstance().getBackupSvNameToSend() == null) {
+            Control.getInstance().setBackupSvNameToSend(hostname);
+            Control.getInstance().setBackupSvPortToSend(port);
+        }
         response = sendAuthenticationSucc();
         con.writeMsg(response);
-        if (Control.getInstance().getUpperServerName() == null) {
-        	Control.getInstance().setUpperServerName((String)authenticate.get("hostname"));
-        	Control.getInstance().setUpperServerPort(Integer.parseInt((String)authenticate.get("port")));
-        }
-        con.setConName((String)authenticate.get("hostname"));
-        con.setConPort((Number)Integer.parseInt((String)authenticate.get("port")));
+
         return false;
     }
-    
+
     /**
      * check whether a server has already authenticated or not
+     * 
      * @return true if it is already authenticated
      */
     private static boolean alreadyAuthenticated(Connection con) {
@@ -115,10 +142,12 @@ public class ControlSolution {
             }
         return false;
     }
-    
+
     /**
-     * send authentication-fail message
-     * @param info indicates why fail
+     * generate authentication-fail message
+     * 
+     * @param info
+     *            indicates why fail
      */
     @SuppressWarnings("unchecked")
     private static String sendAuthenticationFail(String info) {
@@ -127,10 +156,11 @@ public class ControlSolution {
         authenticationFail.put("info", info);
         return authenticationFail.toJSONString();
     }
-    
+
     /**
-     * when receive an authentication fail message, handle it and
-     * close the connection
+     * when receive an authentication fail message, handle it and close the
+     * connection
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveAuthenticationFail(Connection con,
@@ -152,10 +182,12 @@ public class ControlSolution {
         }
         return true;
     }
-    
+
     /**
-     * send an invalid message when something wrong happens
-     * @param info indicates what kind of violation it happens
+     * generate an invalid message when something wrong happens
+     * 
+     * @param info
+     *            indicates what kind of violation it happens
      */
     @SuppressWarnings("unchecked")
     public static String sendInvalidMessage(String info) {
@@ -167,6 +199,7 @@ public class ControlSolution {
 
     /**
      * when receive an invalid message, handle it and close the connection
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveInvalidMessage(Connection con, String msg) {
@@ -182,10 +215,10 @@ public class ControlSolution {
         log.debug("info: " + invalidMsg.get("info"));
         return true;
     }
-    
+
     /**
-     * a message indicating who am I, where I am listening, how many clients
-     * I have (I am a server)
+     * a message indicating who am I, where I am listening, how many clients I have
+     * (I am a server)
      */
     @SuppressWarnings("unchecked")
     public static String sendServerAnnounce() {
@@ -201,11 +234,12 @@ public class ControlSolution {
 
     /**
      * when receive a server announce, handle it, forward it
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveServerAnnounce(Connection con, String msg) {
-        //log.debug("received an SERVER_ANNOUNCE from "
-        //        + Settings.socketAddress(con.getSocket()));
+        log.debug("received a SERVER_ANNOUNCE from "
+                + Settings.socketAddress(con.getSocket()));
         if (!validServer(con)) {
             return true;
         }
@@ -213,36 +247,35 @@ public class ControlSolution {
         if (severAnnon == null) {
             return true;
         }
-        if (!hasValidKV("id", severAnnon, con)) {
+        if (!hasValidKV("id", severAnnon, con)
+                || !hasValidKV("hostname", severAnnon, con)) {
             return true;
         }
-        if (notContainsField("load", severAnnon, con)) {
+        if (notContainsField("load", severAnnon, con)
+                || notContainsField("port", severAnnon, con)) {
             return true;
         }
-        if (!hasValidKV("hostname", severAnnon, con)) {
-            return true;
-        }
-        if (notContainsField("port", severAnnon, con)) {
-            return true;
-        }
-        //log.debug("received an announcement from " + severAnnon.get("id")
-        //        + " load " + severAnnon.get("load") + " at "
-        //        + severAnnon.get("hostname") + ":" + severAnnon.get("port"));
+        log.debug("received an announcement from " + severAnnon.get("id")
+                + " load " + severAnnon.get("load") + " at "
+                + severAnnon.get("hostname") + ":" + severAnnon.get("port"));
         updateSeverStates(severAnnon);
-        broadcast(con, msg, true, true);
+        broadcastWithinServers(con, msg, true);
         return false;
     }
 
     /**
-     * update the list where containing all information about all servers
-     * which connect to the whole network
+     * Version 2: Update the list where containing all information about all servers
+     * which connect to the whole network.For this new version, add information
+     * about servers into the buffer list first. And copy this list to the
+     * server-state list (please see comments for "interconnectedServersBuff" in
+     * class "Control").
      */
     private static void updateSeverStates(JSONObject severAnnon) {
-        ArrayList<Map<String, String>> interconnectedServers = Control
+        ArrayList<Map<String, String>> interconnectedServersBuff = Control
                 .getInstance().getInterconnectedServersBuff();
-        for (Map<String, String> serverState : interconnectedServers) {
+        for (Map<String, String> serverState : interconnectedServersBuff) {
             if (serverState.get("id").equals((String) severAnnon.get("id"))) {
-                Control.getInstance().removeConnectedServer(serverState);
+                Control.getInstance().removeConnectedServerBuff(serverState);
                 break;
             }
         }
@@ -251,11 +284,12 @@ public class ControlSolution {
         serverState.put("load", severAnnon.get("load").toString());
         serverState.put("hostname", (String) severAnnon.get("hostname"));
         serverState.put("port", severAnnon.get("port").toString());
-        Control.getInstance().addConnnectedServer(serverState);
+        Control.getInstance().addConnnectedServerBuff(serverState);
     }
-    
+
     /**
-     * when receive a login message from a client, handle it
+     * Version 2: When receive a login message from a client, handle it.
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveLogin(String msg, Connection con) {
@@ -271,71 +305,400 @@ public class ControlSolution {
         String username = (String) login.get("username");
         String response;
         if (username.equals("anonymous")) {
-            Control.getInstance().addLoggedinAnonymous(
-                    Settings.socketAddress(con.getSocket()));
             response = sendLoginSucc("anonymous");
             con.writeMsg(response);
-            //new change
-            String isRedir = sendRedirect();
-            if (isRedir != "false") {
-            	con.writeMsg(isRedir);
-            }            
-            //
+            if (!sendRedirect(con)) {
+                Control.getInstance().addLoggedinAnonymous(
+                        Settings.socketAddress(con.getSocket()));
+            }
             return false;
         } else {
             if (!hasValidKV("secret", login, con)) {
                 return true;
             }
+            String secret = (String) login.get("secret");
             Map<String, String> registeredClients = Control.getInstance()
                     .getRegisteredClients();
             if (!registeredClients.containsKey(username)) {
-                response = sendLoginFail(
-                        "attempt to login with unregistered username");
-                con.writeMsg(response);
-                return true;
+                if (Control.getInstance().getInterconnectedServers()
+                        .size() == 0) {
+                    response = sendLoginFail(
+                            "attempt to login with unregistered username");
+                    con.writeMsg(response);
+                    return true;
+                }
+                con.setNLoginDenied(0);
+                Control.getInstance().addLoggingClient(username, con);
+                String loginLock = sendLoginLock(username, secret);
+                broadcastWithinServers(con, loginLock, false);
+                return false;
             }
-            String secret = (String) login.get("secret");
             if (!secret.equals(registeredClients.get(username))) {
                 response = sendLoginFail("attempt to login with wrong secret");
                 con.writeMsg(response);
                 return true;
             }
-            Control.getInstance().addLoggedinClient(username + ":" + secret,
-                    Settings.socketAddress(con.getSocket()));
+            String identifier = username + ":" + secret;
+            kickOutClient(identifier);
             response = sendLoginSucc(username);
             con.writeMsg(response);
-            //new change
-            String isRedir = sendRedirect();
-            if (isRedir != "false") {
-            	con.writeMsg(isRedir);
+            String loginAllowed = sendLoginAllowed(username, secret);
+            broadcastWithinServers(con, loginAllowed, false);
+            if (!sendRedirect(con)) {
+                Control.getInstance().addLoggedinClient(identifier,
+                        Settings.socketAddress(con.getSocket()));
+                if (Control.getInstance().getLoggedOutClients()
+                        .containsKey(identifier)) {
+                    sendHistoryMsgToClients(identifier, Control.getInstance()
+                            .getLoggedOutClients().get(identifier));
+                }
+                String announceLogin = sendAnnounceLogin(username, secret);
+                broadcastWithinServers(con, announceLogin, false);
             }
-            //
             return false;
         }
     }
-    
+
     /**
-     * send a redirect message to a client if necessary (first check load,
-     * then send)
+     * Newly added message.
      */
     @SuppressWarnings("unchecked")
-    public static String sendRedirect() {
+    private static String sendLoginLock(String username, String secret) {
+        JSONObject loginLock = new JSONObject();
+        loginLock.put("command", "LOGIN_LOCK");
+        loginLock.put("username", username);
+        loginLock.put("secret", secret);
+        return loginLock.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveLoginLock(Connection con, String msg) {
+        log.debug("received a LOGIN_LOCK from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject loginLock = getJSON(con, msg);
+        if (loginLock == null) {
+            return true;
+        }
+        if (!hasValidKV("username", loginLock, con)
+                || !hasValidKV("secret", loginLock, con)) {
+            return true;
+        }
+        broadcastWithinServers(con, msg, true);
+        String username = (String) loginLock.get("username");
+        String secret = (String) loginLock.get("secret");
+        String response;
+        Map<String, String> registeredClients = Control.getInstance()
+                .getRegisteredClients();
+        if (registeredClients.containsKey(username)
+                && secret.equals(registeredClients.get(username))) {
+            response = sendLoginAllowed(username, secret);
+            broadcastWithinServers(con, response, false);
+            return false;
+        }
+        response = sendLoginDenied(username);
+        broadcastWithinServers(con, response, false);
+        return false;
+    }
+
+    /**
+     * Newly added message.
+     */
+    @SuppressWarnings("unchecked")
+    private static String sendLoginAllowed(String username, String secret) {
+        JSONObject loginAllowed = new JSONObject();
+        loginAllowed.put("command", "LOGIN_ALLOWED");
+        loginAllowed.put("username", username);
+        loginAllowed.put("secret", secret);
+        return loginAllowed.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveLoginAllowed(Connection con, String msg) {
+        log.debug("received a LOGIN_ALLOWED from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject loginAllowed = getJSON(con, msg);
+        if (loginAllowed == null) {
+            return true;
+        }
+        if (!hasValidKV("username", loginAllowed, con)
+                || !hasValidKV("secret", loginAllowed, con)) {
+            return true;
+        }
+        broadcastWithinServers(con, msg, true);
+        String username = (String) loginAllowed.get("username");
+        String secret = (String) loginAllowed.get("secret");
+        if (!Control.getInstance().getRegisteredClients()
+                .containsKey(username)) {
+            Control.getInstance().addRegisteredClient(username, secret);
+        }
+
+        Map<String, Connection> loggingClients = Control.getInstance()
+                .getLoggingClients();
+        if (loggingClients.containsKey(username)) {
+            Connection loggingCon = loggingClients.get(username);
+            String loginSucc = sendLoginSucc(username);
+            loggingCon.writeMsg(loginSucc);
+            String identifier = username + ":" + secret;
+            if (!sendRedirect(loggingCon)) {
+                Control.getInstance().addLoggedinClient(identifier,
+                        Settings.socketAddress(loggingCon.getSocket()));
+                String announceLogin = sendAnnounceLogin(username, secret);
+                broadcastWithinServers(con, announceLogin, false);
+            }
+            Control.getInstance().removeLoggingClient(username);
+        }
+
+        return false;
+    }
+
+    /**
+     * Newly added message.
+     */
+    @SuppressWarnings("unchecked")
+    private static String sendLoginDenied(String username) {
+        JSONObject loginDenied = new JSONObject();
+        loginDenied.put("command", "LOGIN_DENIED");
+        loginDenied.put("username", username);
+        return loginDenied.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveLoginDenied(Connection con, String msg) {
+        log.debug("received a LOGIN_DENIED from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject loginDenied = getJSON(con, msg);
+        if (loginDenied == null) {
+            return true;
+        }
+        if (!hasValidKV("username", loginDenied, con)) {
+            return true;
+        }
+        broadcastWithinServers(con, msg, true);
+
+        String username = (String) loginDenied.get("username");
+        Map<String, Connection> loggingClients = Control.getInstance()
+                .getLoggingClients();
+        if (loggingClients.containsKey(username)) {
+            Connection loggingCon = loggingClients.get(username);
+            loggingCon.incrementNLoginDenied();
+            int nConnectedServers = Control.getInstance()
+                    .getInterconnectedServers().size();
+            if (loggingCon.getNLoginDenied() == nConnectedServers) {
+                String response = sendLoginFail(
+                        "attempt to login with unregistered username");
+                loggingCon.writeMsg(response);
+                Control.getInstance().removeLoggingClient(username);
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Newly added message.
+     */
+    @SuppressWarnings("unchecked")
+    private static String sendAnnounceLogin(String username, String secret) {
+        JSONObject announceLogin = new JSONObject();
+        announceLogin.put("command", "ANNOUNCE_LOGIN");
+        announceLogin.put("username", username);
+        announceLogin.put("secret", secret);
+        return announceLogin.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveAnnounceLogin(String msg, Connection con) {
+        log.debug("received an ANNOUNCE_LOGIN from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject annoLogin = getJSON(con, msg);
+        if (annoLogin == null) {
+            return true;
+        }
+        if (!hasValidKV("username", annoLogin, con)
+                || !hasValidKV("secret", annoLogin, con)) {
+            return true;
+        }
+        broadcastWithinServers(con, msg, true);
+        String username = (String) annoLogin.get("username");
+        String secret = (String) annoLogin.get("secret");
+        String identifier = username + ":" + secret;
+        kickOutClient(identifier);
+        Map<String, Long> loggedOutClients = Control.getInstance()
+                .getLoggedOutClients();
+        if (loggedOutClients.containsKey(identifier)) {
+            long loggedOutTime = loggedOutClients.get(identifier);
+            String lastLogout = sendLastLogout(username, secret,
+                    loggedOutTime);
+            Control.getInstance().removeLoggedOutClient(identifier);
+            broadcastWithinServers(con, lastLogout, false);
+        }
+        String clientAddr = Settings.socketAddress(con.getSocket());
+        if (Control.getInstance().getMsgBuffMap().containsKey(clientAddr)) {
+            Control.getInstance().removeMsgBuff(clientAddr);
+        }
+        return false;
+    }
+
+    /**
+     * New method.
+     */
+    private static void kickOutClient(String identifier) {
+        Map<String, String> loggedinClients = Control.getInstance()
+                .getLoggedinClients();
+        if (loggedinClients.containsKey(identifier)) {
+            String socketAddress = loggedinClients.get(identifier);
+            Control.getInstance().removeLoggedinClient(identifier);
+            ArrayList<Connection> connections = Control.getInstance()
+                    .getConnections();
+            for (Connection connect : connections) {
+                if (socketAddress
+                        .equals(Settings.socketAddress(connect.getSocket()))) {
+                    String authenFail = sendAuthenticationFail(
+                            "you have been kicked out by another client");
+                    connect.writeMsg(authenFail);
+                    connect.closeCon();
+                    long loggedOutTime = new Date().getTime();
+                    Control.getInstance().addLoggedOutClient(identifier,
+                            loggedOutTime);
+                }
+            }
+        }
+    }
+
+    /**
+     * Newly added message.
+     */
+    @SuppressWarnings("unchecked")
+    private static String sendLastLogout(String username, String secret,
+            long loggedOutTime) {
+        JSONObject lastLogout = new JSONObject();
+        lastLogout.put("command", "LAST_LOGOUT");
+        lastLogout.put("username", username);
+        lastLogout.put("secret", secret);
+        lastLogout.put("logouttime", Long.toString(loggedOutTime));
+        return lastLogout.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveLastLogout(Connection con, String msg) {
+        log.debug("received an LAST_LOGOUT from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject lastLogout = getJSON(con, msg);
+        if (lastLogout == null) {
+            return true;
+        }
+        if (!hasValidKV("username", lastLogout, con)
+                || !hasValidKV("secret", lastLogout, con)
+                || !hasValidKV("logouttime", lastLogout, con)) {
+            return true;
+        }
+        broadcastWithinServers(con, msg, true);
+        String username = (String) lastLogout.get("username");
+        String secret = (String) lastLogout.get("secret");
+        String identifier = username + ":" + secret;
+        if (Control.getInstance().getLoggedinClients()
+                .containsKey(identifier)) {
+            long logouttime = Long
+                    .parseLong((String) lastLogout.get("logouttime"));
+            sendHistoryMsgToClients(identifier, logouttime);
+        }
+        return false;
+    }
+
+    /**
+     * New method.
+     */
+    private static void sendHistoryMsgToClients(String identifier,
+            long logouttime) {
         ArrayList<Connection> connections = Control.getInstance()
                 .getConnections();
+        String clientAddr = Control.getInstance().getLoggedinClients()
+                .get(identifier);
+        Connection clientCon = null;
+        for (Connection c : connections) {
+            if (Settings.socketAddress(c.getSocket()).equals(clientAddr)) {
+                clientCon = c;
+                break;
+            }
+        }
+        if (clientCon == null) {
+            log.error("something wrong, system exit");
+            System.exit(-1);
+        }
+        Map<Long, JSONObject> allBroadcastMsg = Control.getInstance()
+                .getAllBroadcastMsg();
+        for (long msgtime : allBroadcastMsg.keySet()) {
+            if ((logouttime - msgtime) <= Settings.LATENCY) {
+                String historyMsg = allBroadcastMsg.get(msgtime)
+                        .toJSONString();
+                clientCon.writeMsg(historyMsg);
+            }
+        }
+    }
+
+    /**
+     * Version 2
+     * 
+     * @param con
+     *            to whom to send the message
+     * @return whether send the redirect message or not
+     */
+    public static boolean sendRedirect(Connection con) {
+        String redirectMsg = generateRedirectMsg();
+        if (!redirectMsg.equals("false")) {
+            con.writeMsg(redirectMsg);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * New method.
+     */
+    @SuppressWarnings("unchecked")
+    public static String generateRedirectMsg() {
         ArrayList<Map<String, String>> candidate = new ArrayList<Map<String, String>>();
+        boolean isRedir = false;
+        ArrayList<Connection> connections = Control.getInstance()
+                .getConnections();
         int localLoad = localLoad(connections);
         ArrayList<Map<String, String>> interconnectedServers = Control
                 .getInstance().getInterconnectedServers();
-        boolean isRedir = false;
         for (Map<String, String> server : interconnectedServers) {
-            int difference = localLoad - Integer.parseInt(server.get("load"));
+            int difference = Integer.parseInt(server.get("load")) - localLoad;
             if (difference >= 2) {
-            	candidate.add(server);
-            	isRedir = true;
+                candidate.add(server);
             }
         }
-        
-        if(isRedir) {
+        if (!candidate.isEmpty()) {
+            isRedir = true;
+        }
+        if (isRedir) {
             Map<String, String> objectServer = aimServer(candidate, localLoad);
             JSONObject redirInfo = new JSONObject();
             redirInfo.put("command", "REDIRECT");
@@ -343,74 +706,67 @@ public class ControlSolution {
             redirInfo.put("port", objectServer.get("port"));
             return redirInfo.toJSONString();
         }
-        else {
-            return "false";
-        }
+        return "false";
     }
-    
-    //new addition
-    public static boolean isInProba(int presentage) {
-    	Random r = new Random();  
-    	int n = r.nextInt(100);  
-    	boolean isRedirFlag = false;
-    	if(n < presentage) {
-    		isRedirFlag = true;
-    	}
-    	return isRedirFlag;
-    }
-    
-    private static Map<String, String> aimServer(ArrayList<Map<String, String>> candidate, int localLoad) {
-    	ArrayList<Map<String, String>> maxServers = new ArrayList<Map<String, String>>();
-    	Map<String, String> objectServer = new HashMap<String, String>();
-    	int maxLoad = 0;
-    	int presentage = 66;
+
+    /**
+     * New method.
+     */
+    private static Map<String, String> aimServer(
+            ArrayList<Map<String, String>> candidate, int localLoad) {
+        ArrayList<Map<String, String>> maxLoadServers = new ArrayList<Map<String, String>>();
+        Map<String, String> objectServer = null;
+        int maxDifference = 0;
 
         for (Map<String, String> server : candidate) {
-            int difference = localLoad - Integer.parseInt(server.get("load"));
-            if (difference >= 2) {
-            	if (difference > maxLoad) {
-            		maxLoad = difference;
-            	}
+            int difference = Integer.parseInt(server.get("load")) - localLoad;
+            if (difference > maxDifference) {
+                maxDifference = difference;
             }
         }
-        
+
         for (Map<String, String> server : candidate) {
-        	int difference = localLoad - Integer.parseInt(server.get("load"));
-        	if (difference == maxLoad) {
-        		maxServers.add(server);
-        	}
+            int difference = Integer.parseInt(server.get("load")) - localLoad;
+            if (difference == maxDifference) {
+                maxLoadServers.add(server);
+            }
         }
-        
-        if(isInProba(presentage)) {
-        	int maxServerIndex;
-        	Random selectedServer = new Random();  
-        	maxServerIndex = selectedServer.nextInt(maxServers.size());
-        	objectServer = maxServers.get(maxServerIndex);
+        if (maxLoadServers.isEmpty()) {
+            log.error("something wrong, system exit");
+            System.exit(-1);
         }
-        else {        	
-        	int selectedServerIndex;
-        	candidate.removeAll(maxServers);
-        	Random selectedServer = new Random(); 
-        	if (candidate.size() != 0) {
-              	selectedServerIndex = selectedServer.nextInt(candidate.size());
-            	objectServer = candidate.get(selectedServerIndex);
-        	}
-        	else {
-            	int maxServerIndex;
-            	maxServerIndex = selectedServer.nextInt(maxServers.size());
-            	objectServer = maxServers.get(maxServerIndex);
-        	}
+
+        if (getTheChance(REDIRECT_TO_MAX_LOAD_SERVER)) {
+            objectServer = maxLoadServers
+                    .get(random.nextInt(maxLoadServers.size()));
+        } else {
+            candidate.removeAll(maxLoadServers);
+            if (!candidate.isEmpty()) {
+                objectServer = candidate.get(random.nextInt(candidate.size()));
+            } else {
+                objectServer = maxLoadServers
+                        .get(random.nextInt(maxLoadServers.size()));
+            }
         }
-    	
-    	return objectServer;
+
+        return objectServer;
     }
-    //
-    
-    
-    
+
     /**
-     * send a login fail message to a client
-     * @param info indicate why login fail
+     * New Method. Helper function.
+     * 
+     * @param presentage
+     * @return whether it get the chance to do something or not
+     */
+    public static boolean getTheChance(int presentage) {
+        return random.nextInt(100) <= presentage;
+    }
+
+    /**
+     * generate a login fail message to a client
+     * 
+     * @param info
+     *            indicate why login fail
      */
     @SuppressWarnings("unchecked")
     private static String sendLoginFail(String info) {
@@ -419,9 +775,9 @@ public class ControlSolution {
         loginFail.put("info", info);
         return loginFail.toJSONString();
     }
-    
+
     /**
-     * send a login success message to a client
+     * generate a login success message to a client
      */
     @SuppressWarnings("unchecked")
     private static String sendLoginSucc(String username) {
@@ -430,9 +786,10 @@ public class ControlSolution {
         loginSucc.put("info", "logged in as user " + username);
         return loginSucc.toJSONString();
     }
-    
+
     /**
-     * when receive a logout message, close the connection
+     * Version 2. When receive a logout message, close the connection.
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveLogout(Connection con) {
@@ -444,6 +801,8 @@ public class ControlSolution {
         for (String key : loggedinClients.keySet()) {
             if (clientAddr.equals(loggedinClients.get(key))) {
                 Control.getInstance().removeLoggedinClient(key);
+                long loggedOutTime = new Date().getTime();
+                Control.getInstance().addLoggedOutClient(key, loggedOutTime);
                 break;
             }
         }
@@ -451,12 +810,6 @@ public class ControlSolution {
                 .contains(clientAddr)) {
             Control.getInstance().removeLoggedinAnonymous(clientAddr);
         }
-        // msg_in_order
-        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
-        if(msgBuffMap.containsKey(clientAddr)) {
-        	msgBuffMap.remove(clientAddr);
-        }
-        //
         return true;
     }
 
@@ -464,8 +817,8 @@ public class ControlSolution {
      * when receive a register message, handle it and broadcast a lock request
      * message within servers
      * 
-     *  assumption: there is no such case that two clients are registering with the
-     *  same username to two different servers at the same time
+     * assumption: there is no such case that two clients are registering with the
+     * same username to two different servers at the same time
      */
     public static boolean receiveRegister(String msg, Connection con) {
         log.debug("received a REGISTER from "
@@ -474,10 +827,8 @@ public class ControlSolution {
         if (register == null) {
             return true;
         }
-        if (!hasValidKV("username", register, con)) {
-            return true;
-        }
-        if (!hasValidKV("secret", register, con)) {
+        if (!hasValidKV("username", register, con)
+                || !hasValidKV("secret", register, con)) {
             return true;
         }
         String response;
@@ -499,12 +850,12 @@ public class ControlSolution {
         con.setNRequestAllo(0);
         Control.getInstance().addRegisteringClient(username, con);
         String lockReq = sendLockRequest(username, secret);
-        broadcast(con, lockReq, true, false);
+        broadcastWithinServers(con, lockReq, false);
         return false;
     }
-    
+
     /**
-     * send a register fail message to a client
+     * generate a register fail message to a client
      */
     @SuppressWarnings("unchecked")
     public static String sendRegisterFail(String username) {
@@ -514,9 +865,9 @@ public class ControlSolution {
                 username + " is already registered with the system");
         return registerFail.toJSONString();
     }
-    
+
     /**
-     * send a register success message to a client
+     * generate a register success message to a client
      */
     @SuppressWarnings("unchecked")
     public static String sendRegisterSucc(String username) {
@@ -525,9 +876,9 @@ public class ControlSolution {
         registerSucc.put("info", "register success for " + username);
         return registerSucc.toJSONString();
     }
-    
+
     /**
-     * send a lock request message to indicate a user want to register with
+     * generate a lock request message to indicate a user wanting to register with
      * given username and secret
      */
     @SuppressWarnings("unchecked")
@@ -538,10 +889,11 @@ public class ControlSolution {
         lockReq.put("secret", secret);
         return lockReq.toJSONString();
     }
-    
+
     /**
      * when receive a lock request message, handle it (first check its local
      * storage, then broadcast corresponding message within servers)
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveLockRequest(String msg, Connection con) {
@@ -554,13 +906,11 @@ public class ControlSolution {
         if (lockReq == null) {
             return true;
         }
-        if (!hasValidKV("username", lockReq, con)) {
+        if (!hasValidKV("username", lockReq, con)
+                || !hasValidKV("secret", lockReq, con)) {
             return true;
         }
-        if (!hasValidKV("secret", lockReq, con)) {
-            return true;
-        }
-        broadcast(con, msg, true, true);
+        broadcastWithinServers(con, msg, true);
         String response;
         String username = (String) lockReq.get("username");
         String secret = (String) lockReq.get("secret");
@@ -570,17 +920,17 @@ public class ControlSolution {
                 && !secret.equals(registeredClients.get(username))) {
             Control.getInstance().removeRegisteredClient(username);
             response = sendLockDenied(username, secret);
-            broadcast(con, response, true, false);
-            return true;
+            broadcastWithinServers(con, response, false);
+            return false;
         }
         if (!registeredClients.containsKey(username)) {
             Control.getInstance().addRegisteredClient(username, secret);
         }
         response = sendLockAllowed(username, secret);
-        broadcast(con, response, true, false);
+        broadcastWithinServers(con, response, false);
         return false;
     }
-    
+
     @SuppressWarnings("unchecked")
     private static String sendLockDenied(String username, String secret) {
         JSONObject lockDen = new JSONObject();
@@ -589,11 +939,11 @@ public class ControlSolution {
         lockDen.put("secret", secret);
         return lockDen.toJSONString();
     }
-    
+
     /**
-     * when receive a lock denied, the server will check whether it is himself 
-     * who receive the register message initially, if it is, then send a
-     * register fail message to that client
+     * when receive a lock denied, the server will check whether it is himself who
+     * receive the register message initially, if it is, then send a register fail
+     * message to that client
      * 
      * @return whether this connection should terminate or not
      */
@@ -607,12 +957,11 @@ public class ControlSolution {
         if (lockDen == null) {
             return true;
         }
-        if (!hasValidKV("username", lockDen, con)) {
+        if (!hasValidKV("username", lockDen, con)
+                || !hasValidKV("secret", lockDen, con)) {
             return true;
         }
-        if (!hasValidKV("secret", lockDen, con)) {
-            return true;
-        }
+        broadcastWithinServers(con, msg, true);
         String username = (String) lockDen.get("username");
         String secret = (String) lockDen.get("secret");
         Map<String, String> registeredClients = Control.getInstance()
@@ -621,18 +970,18 @@ public class ControlSolution {
                 && secret.equals(registeredClients.get(username))) {
             Control.getInstance().removeRegisteredClient(username);
         }
-        broadcast(con, msg, true, true);
         Map<String, Connection> registeringClients = Control.getInstance()
                 .getRegisteringClients();
         if (registeringClients.containsKey(username)) {
             Connection registeringCon = registeringClients.get(username);
             String response = sendRegisterFail(username);
             registeringCon.writeMsg(response);
+            registeringCon.closeCon();
             Control.getInstance().removeRegisteringClient(username);
         }
         return false;
     }
-    
+
     @SuppressWarnings("unchecked")
     private static String sendLockAllowed(String username, String secret) {
         JSONObject lockAllo = new JSONObject();
@@ -641,13 +990,14 @@ public class ControlSolution {
         lockAllo.put("secret", secret);
         return lockAllo.toJSONString();
     }
-    
+
     /**
-     * when receive a lock allowed, the server will check whether it is himself 
-     * who receive the register message initially, if it is, then increment the
-     * number of lock-allowed received. If the number of lock-allowd message
-     * received matches the number of servers in the whole network, it will
-     * send a register success to the client 
+     * when receive a lock allowed, the server will check whether it is himself who
+     * receive the register message initially, if it is, then increment the number
+     * of lock-allowed received. If the number of lock-allowd message received
+     * matches the number of servers in the whole network, it will send a register
+     * success to the client
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveLockAllowed(String msg, Connection con) {
@@ -660,13 +1010,11 @@ public class ControlSolution {
         if (lockAllo == null) {
             return true;
         }
-        if (!hasValidKV("username", lockAllo, con)) {
+        if (!hasValidKV("username", lockAllo, con)
+                || !hasValidKV("secret", lockAllo, con)) {
             return true;
         }
-        if (!hasValidKV("secret", lockAllo, con)) {
-            return true;
-        }
-        broadcast(con, msg, true, true);
+        broadcastWithinServers(con, msg, true);
         String username = (String) lockAllo.get("username");
         String secret = (String) lockAllo.get("secret");
         Map<String, Connection> registeringClients = Control.getInstance()
@@ -687,8 +1035,103 @@ public class ControlSolution {
     }
 
     /**
-     * when receive an activity message, process it (add a new field in the 
-     * activity JSON) and then broadcast it within the whole network
+     * Newly added message. Generate backup server message to another server
+     */
+    @SuppressWarnings("unchecked")
+    public static String sendBackupServer() {
+        JSONObject backupServer = new JSONObject();
+        backupServer.put("command", "BACKUP_SERVER");
+        backupServer.put("backupname",
+                Control.getInstance().getBackupSvNameToSend());
+        backupServer.put("backupport", Integer
+                .toString(Control.getInstance().getBackupSvPortToSend()));
+        return backupServer.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveBackupServer(Connection con, String sMsg) {
+        log.debug("received a BACKUP_SERVER from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject backUpSv = getJSON(con, sMsg);
+        if (!hasValidKV("backupname", backUpSv, con)
+                || !hasValidKV("backupport", backUpSv, con)) {
+            return true;
+        }
+        String backupSvName = (String) backUpSv.get("backupname");
+        int backupSvPort = Integer
+                .parseInt((String) backUpSv.get("backupport"));
+        if (Settings.getLocalHostname().equals(backupSvName)
+                && Settings.getLocalPort() == backupSvPort) {
+            Control.getInstance().setBackupSvNameToUse(null);
+            Control.getInstance().setBackupSvPortToUse(0);
+            return false;
+        }
+        Control.getInstance().setBackupSvNameToUse(backupSvName);
+        Control.getInstance().setBackupSvPortToUse(backupSvPort);
+        return false;
+    }
+
+    /**
+     * Newly added message. Reply authentication success to another server
+     */
+    @SuppressWarnings("unchecked")
+    public static String sendAuthenticationSucc() {
+        // int port = Settings.getLocalPort();
+        JSONObject authenSucc = new JSONObject();
+        authenSucc.put("command", "AUTHENTICATION_SUCCESS");
+        authenSucc.put("backupname",
+                Control.getInstance().getBackupSvNameToSend());
+        authenSucc.put("backupport", Integer
+                .toString(Control.getInstance().getBackupSvPortToSend()));
+        return authenSucc.toJSONString();
+    }
+
+    /**
+     * New method.
+     */
+    public static boolean receiveAuthenticationSucc(Connection con,
+            String sMsg) {
+        log.debug("received an AUTHENTICATION_SUCCESS from "
+                + Settings.socketAddress(con.getSocket()));
+        if (!validServer(con)) {
+            return true;
+        }
+        JSONObject authenSucc = getJSON(con, sMsg);
+        if (!hasValidKV("backupname", authenSucc, con)
+                || !hasValidKV("backupport", authenSucc, con)) {
+            return true;
+        }
+        setAuthenSecret(Settings.getSecret());
+
+        con.setConnectingSvName(Settings.getRemoteHostname());
+        con.setConnectingSvPort(Settings.getRemotePort());
+        Control.getInstance().setBackupSvNameToSend(con.getConnectingSvName());
+        Control.getInstance().setBackupSvPortToSend(con.getConnectingSvPort());
+        broadcastWithinServers(con, sendBackupServer(), true);
+
+        String backupSvName = (String) authenSucc.get("backupname");
+        int backupSvPort = Integer
+                .parseInt((String) authenSucc.get("backupport"));
+        if (Settings.getLocalHostname().equals(backupSvName)
+                && Settings.getLocalPort() == backupSvPort) {
+            Control.getInstance().setBackupSvNameToUse(null);
+            Control.getInstance().setBackupSvPortToUse(0);
+            return false;
+        }
+        Control.getInstance().setBackupSvNameToUse(backupSvName);
+        Control.getInstance().setBackupSvPortToUse(backupSvPort);
+        return false;
+    }
+
+    /**
+     * Version 2: When receive an activity message, process it (add a new field in
+     * the activity JSON) and then broadcast it within the whole network.
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveActivityMessage(Connection con, String msg) {
@@ -710,7 +1153,6 @@ public class ControlSolution {
         if (notContainsField("activity", actMsg, con)) {
             return true;
         }
-
         String response;
         JSONObject activity = (JSONObject) actMsg.get("activity");
         if (activity == null) {
@@ -723,39 +1165,61 @@ public class ControlSolution {
             return true;
         }
         JSONObject processedAct = processActivity(activity, username);
-        // msg_in_order
+
         // store in buff
-        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
-        String clientAddr = Settings.socketAddress(con.getSocket()); //use client address to identify user
-        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
-        	msgBuffMap.put(clientAddr, new MsgBuff());
-        int order = msgBuffMap.get(clientAddr).getNextInMsgOrder(); // generated order
-        if(!msgBuffMap.get(clientAddr).put(sendActivityBroadcast(processedAct,clientAddr,order))) {
-        	log.warn("wrong msg with previous order received");
-        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
-        	return true;
+        String clientAddr = Settings.socketAddress(con.getSocket()); // use client address to identify user
+        if (!Control.getInstance().getMsgBuffMap().containsKey(clientAddr)) {
+            // not found in map, generate a new object
+            Control.getInstance().addMsgBuff(clientAddr, 0);
+        }
+        int order = Control.getInstance().getMsgBuffMap().get(clientAddr)
+                .getNextInMsgOrder(); // generated order
+        JSONObject actBroadcast = sendActivityBroadcast(processedAct,
+                clientAddr, order);
+        long time = (long) actBroadcast.get("time");
+
+        // ****
+        Control.getInstance().addBroadcastMsg(time, actBroadcast);
+        // ****
+
+        if (!Control.getInstance().getMsgBuffMap().get(clientAddr)
+                .put(actBroadcast)) {
+            log.warn("wrong msg with previous order received");
+            con.writeMsg(
+                    sendInvalidMessage("wrong message with previous order"));
+            return true;
         }
         // flush the message to broadcast
-        while(msgBuffMap.get(clientAddr).hasNext())
-        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, false);
-        	// broadcast to all server
-        // msg_in_order
+        while (Control.getInstance().getMsgBuffMap().get(clientAddr).hasNext())
+            broadcastToAll(con, Control.getInstance().getMsgBuffMap()
+                    .get(clientAddr).flush(), false, time);
+        // broadcast to all server
 
         return false;
     }
-    
+
+    /**
+     * Version 2
+     * 
+     * @param processedAct
+     * @return
+     */
     @SuppressWarnings("unchecked")
-    private static JSONObject sendActivityBroadcast(JSONObject processedAct,String clientAddr, int order) { //override
+    private static JSONObject sendActivityBroadcast(JSONObject processedAct,
+            String clientAddr, int order) {
+        long msgTime = (new Date()).getTime();
         JSONObject actBroadcast = new JSONObject();
         actBroadcast.put("command", "ACTIVITY_BROADCAST");
         actBroadcast.put("activity", processedAct);
-        actBroadcast.put("client", clientAddr); // msg_in_order
-        actBroadcast.put("order", order); // msg_in_order
+        actBroadcast.put("time", msgTime);
+        actBroadcast.put("client", clientAddr);
+        actBroadcast.put("order", order);
         return actBroadcast;
     }
-    
+
     /**
-     * when receive an activity broadcast, forward it
+     * Version 2: When receive an activity broadcast, forward it.
+     * 
      * @return whether this connection should terminate or not
      */
     public static boolean receiveActivityBroadcast(Connection con,
@@ -772,6 +1236,10 @@ public class ControlSolution {
         if (notContainsField("activity", actBroadCast, con)) {
             return true;
         }
+        if (notContainsField("time", actBroadCast, con)) {
+            return true;
+        }
+        long time = (long) actBroadCast.get("time");
         JSONObject activity = (JSONObject) actBroadCast.get("activity");
         if (activity == null) {
             String response = sendInvalidMessage(
@@ -779,29 +1247,35 @@ public class ControlSolution {
             con.writeMsg(response);
             return true;
         }
-        // msg_in_order
-        // store in buff
-        Map<String, MsgBuff> msgBuffMap = Control.getInstance().getMsgBuffMap();
-        String clientAddr = (String)actBroadCast.get("client");
-        if(!msgBuffMap.containsKey(clientAddr)) // not found in map, generate a new object
-        	msgBuffMap.put(clientAddr, new MsgBuff());
-        if(!msgBuffMap.get(clientAddr).put(actBroadCast)) { // put failed, wrong order
-        	log.warn("wrong msg with previous order received");
-        	con.writeMsg(sendInvalidMessage("wrong message with previous order"));
-        	return true;
+        String clientAddr = (String) actBroadCast.get("client");
+        int order = ((Number) actBroadCast.get("order")).intValue();
+        if (!Control.getInstance().getMsgBuffMap().containsKey(clientAddr)) // not found in map, generate a new object
+            Control.getInstance().addMsgBuff(clientAddr, order);
+        if (!Control.getInstance().getMsgBuffMap().get(clientAddr)
+                .put(actBroadCast)) { // put failed, wrong order
+            log.warn("wrong msg with previous order received");
+            con.writeMsg(
+                    sendInvalidMessage("wrong message with previous order"));
+            return true;
         }
         // flush the message to broadcast
-        while(msgBuffMap.get(clientAddr).hasNext())
-        	broadcast(con, msgBuffMap.get(clientAddr).flush(), false, true); 
-        	// broadcast to all except the con sent msg
-        // msg_in_order
+        while (Control.getInstance().getMsgBuffMap().get(clientAddr)
+                .hasNext()) {
+            // broadcast to all except the con sent msg
+            broadcastToAll(con, Control.getInstance().getMsgBuffMap()
+                    .get(clientAddr).flush(), true, time);
+        }
+        Control.getInstance().addBroadcastMsg(time, actBroadCast);
         return false;
     }
 
     /**
      * process the activity message
-     * @param activity which to be processed
-     * @param username which to be added into activity message
+     * 
+     * @param activity
+     *            which to be processed
+     * @param username
+     *            which to be added into activity message
      * @return processed activity message
      */
     @SuppressWarnings("unchecked")
@@ -868,51 +1342,45 @@ public class ControlSolution {
         log.info("using given secret: " + Settings.getSecret());
         return true;
     }
-    
+
     /**
+     * Version 2: Broadcast to all nodes (including clients) within network.
      * 
-     * @param withinServers whether broadcast within servers only
-     * @param forwardMsg whether needs to send to the sender
+     * @param forwardMsg
+     *            whether needs to send to the sender
      */
-    public static void broadcast(Connection con, String msg,
-            boolean withinServers, boolean forwardMsg) {
+    private static void broadcastToAll(Connection con, String msg,
+            boolean forwardMsg, long time) {
         ArrayList<Connection> connections = Control.getInstance()
                 .getConnections();
-        String receivedFrom = (con == null)?(null):(Settings.socketAddress(con.getSocket()));
-        if (withinServers) {
-            broadcastWithinServers(con, msg, forwardMsg, connections,
-                    receivedFrom);
-        } else {
-            broadcastToAll(msg, forwardMsg, connections, receivedFrom);
-        }
-    }
-    
-    /**
-     * broadcast to all nodes (including clients) within network
-     * @param forwardMsg whether needs to send to the sender
-     */
-    private static void broadcastToAll(String msg, boolean forwardMsg,
-            ArrayList<Connection> connections, String receivedFrom) {
+        String receivedFrom = Settings.socketAddress(con.getSocket());
         if (forwardMsg) {
             for (Connection c : connections) {
-                String socAddr = Settings.socketAddress(c.getSocket());
-                if (!socAddr.equals(receivedFrom))
-                    c.writeMsg(msg);
+                if (c.getEstablishTime() <= time) {
+                    String socAddr = Settings.socketAddress(c.getSocket());
+                    if (!socAddr.equals(receivedFrom))
+                        c.writeMsg(msg);
+                }
             }
         } else {
             for (Connection c : connections) {
-                c.writeMsg(msg);
+                if (c.getEstablishTime() <= time)
+                    c.writeMsg(msg);
             }
         }
     }
 
     /**
-     * broadcast just within servers
-     * @param forwardMsg whether needs to send to the sender
+     * Version 2: Broadcast just within servers.
+     * 
+     * @param forwardMsg
+     *            whether needs to send to the sender
      */
-    private static void broadcastWithinServers(Connection con, String msg,
-            boolean forwardMsg, ArrayList<Connection> connections,
-            String receivedFrom) {
+    public static void broadcastWithinServers(Connection con, String msg,
+            boolean forwardMsg) {
+        ArrayList<Connection> connections = Control.getInstance()
+                .getConnections();
+        String receivedFrom = Settings.socketAddress(con.getSocket());
         if (forwardMsg) {
             for (Connection c : connections) {
                 String socAddr = Settings.socketAddress(c.getSocket());
@@ -927,6 +1395,17 @@ public class ControlSolution {
         }
     }
 
+    /**
+     * Check whether a JSONObject contains a certain field and has values.
+     * 
+     * @param field
+     *            the field we want to check whether a JSONObject has
+     * @param jMsg
+     *            the JSONObject to be checked
+     * @param con
+     * @return whether the JSONObject contains this certain field and has values or
+     *         not
+     */
     private static boolean hasValidKV(String field, JSONObject jMsg,
             Connection con) {
         if (notContainsField(field, jMsg, con)) {
@@ -962,7 +1441,7 @@ public class ControlSolution {
         }
         return false;
     }
-    
+
     /**
      * calculate the local load (how many clients connecting to it)
      */
@@ -1003,85 +1482,5 @@ public class ControlSolution {
         }
         return sCmd;
     }
-    /**
-     * send backup server address to another server
-     */
-    @SuppressWarnings("unchecked")
-    public static String sendBackupServer() {
-    	log.debug("sending BACKUP_SERVER");
-        JSONObject jMsg = new JSONObject();
-        jMsg.put("command", "BACKUP_SERVER");
-        jMsg.put("backupname", Control.getInstance().getUpperServerName());
-        jMsg.put("backupport", Control.getInstance().getUpperServerPort());
-        return jMsg.toJSONString();
-    }
-    
-	public static boolean receiveBackupServer(Connection con, String sMsg ) {
-        log.debug("received an BACKUP_SERVER from "
-                + con.getConName() + ":" + con.getConPort());
-        if (!validServer(con)) {
-            return true;
-        }
-        JSONObject jMsg = getJSON(con, sMsg);
-        if (notContainsField("backupname", jMsg, con) 
-        		|| notContainsField("backupport", jMsg, con)) {
-            return true;
-        }
-        if (Settings.getLocalHostname().equals(jMsg.get("backupname"))
-        		&& Integer.toString(Settings.getLocalPort()).equals(jMsg.get("backupport").toString())) {
-            Control.getInstance().setBackupServerName(null);
-            Control.getInstance().setBackupServerPort(null);
-            return false;
-        } else {
-        Control.getInstance().setBackupServerName((String)jMsg.get("backupname"));
-        Control.getInstance().setBackupServerPort((Number)jMsg.get("backupport"));
-        return false;
-        }
-    }
 
-    /**
-     * reply authentication success to another server
-     */
-    @SuppressWarnings("unchecked")
-    public static String sendAuthenticationSucc() {
-    	log.debug("sending AUTHEN_SUCC");
-        Integer iPort = new Integer(Settings.getLocalPort());
-    	JSONObject jMsg = new JSONObject();
-        jMsg.put("command", "AUTHENTICATION_SUCC");
-        jMsg.put("uppername", Settings.getLocalHostname());
-        jMsg.put("upperport", (Number)iPort);
-        jMsg.put("backupname", Control.getInstance().getUpperServerName());
-        jMsg.put("backupport", Control.getInstance().getUpperServerPort());
-        return jMsg.toJSONString();
-    }
-
-	public static boolean receiveAuthenticationSucc(Connection con, String sMsg ) {
-        log.debug("received an AUTHENTICATION_SUCC from "
-        		+ con.getConName() + ":" + con.getConPort());
-        if (!validServer(con)) {
-            return true;
-        }
-        JSONObject jMsg = getJSON(con, sMsg);
-        if (notContainsField("backupname", jMsg, con) 
-        		|| notContainsField("backupport", jMsg, con)) {
-            return true;
-        }
-        con.setConName((String)jMsg.get("uppername"));
-        con.setConPort((Number)jMsg.get("upperport"));
-        if (Settings.getLocalHostname().equals(jMsg.get("backupname"))
-        		&& Integer.toString(Settings.getLocalPort()).equals(jMsg.get("backupport").toString())) {
-        	Control.getInstance().setBackupServerName(null);
-            Control.getInstance().setBackupServerPort(null);
-        }
-        
-        Control.getInstance().setUpperServerName(con.getConName());
-        Control.getInstance().setUpperServerPort(con.getConPort());
-        Control.getInstance().setBackupServerName((String)jMsg.get("backupname"));
-        Control.getInstance().setBackupServerPort((Number)jMsg.get("backupport"));
-        
-        broadcast(con, sendBackupServer(), true, true);
-        
-        return false;
-    }
-	
 }
