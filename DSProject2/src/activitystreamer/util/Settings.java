@@ -18,6 +18,16 @@ public class Settings {
     private static String username = "anonymous";
     private static String secret = null;
 
+    // the preset hypothesis latency of the message transmission
+    public static final long LATENCY = 5000;
+
+    // indicate how big the chance(the percentage) is to redirect a client
+    private static int redirectChance = 20;
+
+    public static int getRedirectChance() {
+        return redirectChance;
+    }
+
     public static int getLocalPort() {
         return localPort;
     }
