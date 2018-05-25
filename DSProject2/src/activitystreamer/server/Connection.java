@@ -163,6 +163,13 @@ public class Connection extends Thread {
             }
             log.debug(
                     "connection closed to " + Settings.socketAddress(socket));
+            if (!this.isServer) {
+                ControlSolution.receiveLogout(this);
+            }
+            Control.getInstance().connectionClosed(this);
+            if (!socket.isClosed()) {
+                socket.close();
+            }
             if (isSvOutgoingForSv) {
                 Control.getInstance().crashRedirect();
             } else if (isServer && this.connectingSvName.equals(
@@ -170,13 +177,6 @@ public class Connection extends Thread {
                     && this.connectingSvPort == Control.getInstance()
                             .getBackupSvPortToSend()) {
                 Control.getInstance().chooseBackupSvToSend();
-            }
-            if (!this.isServer) {
-                ControlSolution.receiveLogout(this);
-            }
-            Control.getInstance().connectionClosed(this);
-            if (!socket.isClosed()) {
-                socket.close();
             }
         } catch (IOException e) {
             log.error("connection " + Settings.socketAddress(socket)
